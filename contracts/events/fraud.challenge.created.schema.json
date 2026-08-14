@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antifraude.internal/contracts/events/fraud.challenge.created/1.0.0.schema.json",
+  "title": "fraud.challenge.created",
+  "description": "Evento interno publicado quando a camada de politica classifica uma transacao na banda challenge. Consumido pela fila de triagem e pelo workflow de validadores. Nao trafega dados pessoais em claro: o titular e identificado por token.",
+  "type": "object",
+  "required": [
+    "event_name",
+    "event_version",
+    "event_id",
+    "occurred_at",
+    "transaction_id",
+    "correlation_id",
+    "subject_token",
+    "decision_initial",
+    "scores",
+    "execution",
+    "policy",
+    "transaction_context"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "event_name": {
+      "const": "fraud.challenge.created"
+    },
+    "event_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Versao semantica do contrato do evento."
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador unico do evento. Reemissao do mesmo challenge reutiliza a chave de idempotencia, nao o event_id."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instante da decisao inicial, em UTC."
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Chave de idempotencia do challenge. Convencao: transaction_id + correlation_id. Consumidores devem tratar entregas repetidas como a mesma unidade de trabalho."
+    },
+    "transaction_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identificador de correlacao propagado desde a borda, usado para tracing distribuido."
+    },
+    "subject_token": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identificador interno do titular ou CPF tokenizado. Nunca o CPF em claro (LGPD: minimizacao)."
+    },
+    "decision_initial": {
+      "type": "string",
+      "enum": ["challenge"],
+      "description": "A decisao inicial que originou o evento. Apenas challenge publica neste topico."
+    },
+    "scores": {
+      "type": "object",
+      "required": ["consolidated"],
+      "additionalProperties": false,
+      "properties": {
+        "hbos": {
+          "type": ["number", "null"],
+          "description": "Score de anomalia do HBOS individual. Nulo quando o CPF nao possui bundle elegivel. Sinal comportamental, nao prova de fraude."
+        },
+        "hbos_weight_applied": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Peso efetivo aplicado ao HBOS pela politica; zero nas faixas de cold start sem historico suficiente."
+        },
+        "global_model": {
+          "type": ["number", "null"],
+          "description": "Score bruto do modelo supervisionado global."
+        },
+        "cold_start_model": {
+          "type": ["number", "null"],
+          "description": "Score do modelo dedicado de cold start, quando aplicado."
+        },
+        "consolidated": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Probabilidade calibrada consolidada usada pela camada de politica."
+        },
+        "calibration_applied": {
+          "type": "boolean",
+          "description": "Indica se o score consolidado passou por calibracao versionada."
+        }
+      }
+    },
+    "signals": {
+      "type": "array",
+      "description": "Sinais e regras acionadas, com evidencia auditavel.",
+      "items": {
+        "type": "object",
+        "required": ["code", "source", "outcome"],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Reason code estavel e auditavel, por exemplo cold_start ou regra_83."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["hard_rule", "business_rule", "hbos", "global_model", "cold_start_model", "graph", "device", "geo", "blocklist", "bureau"]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": ["triggered", "not_triggered", "unavailable"]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "low", "medium", "high", "critical"]
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Evidencia estruturada que sustenta o sinal. Campos sensiveis devem vir mascarados.",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "features": {
+      "type": "object",
+      "description": "Features relevantes para os validadores. Sujeitas a minimizacao e mascaramento conforme politica de dados.",
+      "additionalProperties": true
+    },
+    "feature_weights": {
+      "type": "object",
+      "description": "Contribuicao por feature, quando disponivel. Para o HBOS deriva das contribuicoes por histograma.",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "model_versions": {
+      "type": "object",
+      "description": "Identidade completa dos artefatos usados na decisao inicial.",
+      "additionalProperties": false,
+      "properties": {
+        "hbos_bundle_version": { "type": ["string", "null"] },
+        "global_model_version": { "type": ["string", "null"] },
+        "cold_start_model_version": { "type": ["string", "null"] },
+        "calibration_version": { "type": ["string", "null"] },
+        "rules_version": { "type": ["string", "null"] },
+        "policy_version": { "type": ["string", "null"] },
+        "feature_schema_version": { "type": ["string", "null"] }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "required": ["layers_executed", "terminating_layer"],
+      "additionalProperties": false,
+      "properties": {
+        "layers_executed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "layers_skipped": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "terminating_layer": {
+          "type": "string",
+          "description": "Camada que encerrou ou elevou o risco ate a banda challenge."
+        },
+        "risk_escalating_layer": {
+          "type": ["string", "null"],
+          "description": "Camada que elevou o risco, quando distinta da que encerrou."
+        },
+        "fallback_reason": {
+          "type": ["string", "null"],
+          "description": "Motivo do fallback, quando alguma camada nao pode ser executada."
+        },
+        "latency_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "shadow_mode": {
+          "type": "boolean",
+          "description": "Verdadeiro quando a avaliacao foi feita em shadow e nao afetou a decisao online."
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "required": ["cohort"],
+      "additionalProperties": false,
+      "properties": {
+        "cohort": {
+          "type": "string",
+          "enum": ["sem_historico", "historico_minimo", "historico_parcial", "historico_pleno"],
+          "description": "Faixa de historico usada pela politica de cold start."
+        },
+        "thresholds_version": { "type": ["string", "null"] },
+        "challenge_band": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lower": { "type": "number" },
+            "upper": { "type": "number" }
+          }
+        },
+        "step_up_eligible": {
+          "type": "boolean",
+          "description": "Indica se a transacao e elegivel a step-up de autenticacao, por exemplo confirmacao via WhatsApp."
+        }
+      }
+    },
+    "transaction_context": {
+      "type": "object",
+      "description": "Contexto minimo necessario aos validadores.",
+      "required": ["amount", "currency", "channel", "product"],
+      "additionalProperties": false,
+      "properties": {
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+        "channel": { "type": "string" },
+        "product": { "type": "string" },
+        "transaction_type": { "type": "string" },
+        "installments": { "type": ["integer", "null"], "minimum": 0 },
+        "merchant": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "string" },
+            "mcc": { "type": ["string", "null"] },
+            "is_new_for_subject": { "type": ["boolean", "null"] }
+          }
+        },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fingerprint_token": { "type": ["string", "null"] },
+            "is_new_for_subject": { "type": ["boolean", "null"] }
+          }
+        },
+        "geo": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "country": { "type": ["string", "null"] },
+            "region": { "type": ["string", "null"] },
+            "precision": { "type": ["string", "null"] }
+          }
+        }
+      }
+    }
+  }
+}
