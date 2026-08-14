@@ -120,6 +120,8 @@ calibração e latência.
 
 ## Resumo de dependências
 
+Versão em diagrama no [mapa mental](mapa-mental.md#5-dependência-entre-as-fases).
+
 ```text
 Fase 0 (telemetria + shadow)
   ├── Fase 1 (challenge operacional)

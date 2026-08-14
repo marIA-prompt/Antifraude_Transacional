@@ -13,6 +13,8 @@ Todo documento aqui separa explicitamente **AS-IS** (o que existe), **Lacuna/Ris
 
 ### Contexto
 
+- [Mapa mental do projeto](docs/mapa-mental.md) — visão única em diagramas: AS-IS, lacunas,
+  decisões, fluxo TO-BE, trilha de challenge e dependência entre fases. **Comece aqui.**
 - [Contexto AS-IS do motor de score](docs/arquitetura/00-contexto-as-is.md) — fluxo vigente
   (gate da Regra 83), componentes de decisão, lacunas consolidadas e perguntas abertas.
 
