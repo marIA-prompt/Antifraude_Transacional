@@ -1,0 +1,329 @@
+openapi: 3.0.3
+info:
+  title: Motor de Score Antifraude
+  version: 1.0.0
+  description: >-
+    Contrato do microservico de score antifraude. A v1 preserva o comportamento AS-IS e expoe
+    somente decision_final. A v2 adiciona explicabilidade para consumidores autorizados, sob
+    autenticacao, autorizacao por perfil e mascaramento de dados sensiveis.
+
+    O orquestrador da trilha de challenge nao deve consumir estas APIs: ele recebe contexto pelo
+    evento interno fraud.challenge.created.
+
+servers:
+  - url: https://antifraude.internal
+    description: Ambiente interno
+
+tags:
+  - name: v1
+    description: Contrato legado, retrocompativel. Nao evolui.
+  - name: v2
+    description: Contrato com explicabilidade, restrito a perfis autorizados.
+
+paths:
+  /v1/score:
+    post:
+      tags: [v1]
+      operationId: scoreV1
+      summary: Avalia uma transacao e retorna apenas a decisao final
+      description: >-
+        Contrato AS-IS. Mantido estavel para retrocompatibilidade dos autorizadores existentes.
+        Score, sinais, features e pesos permanecem em logs e no evento interno.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScoreRequest'
+      responses:
+        '200':
+          description: Decisao final da transacao
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScoreResponseV1'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v2/score:
+    post:
+      tags: [v2]
+      operationId: scoreV2
+      summary: Avalia uma transacao e retorna decisao com explicabilidade
+      description: >-
+        Requer escopo antifraude.score.explain. O nivel de detalhe retornado depende do perfil do
+        consumidor: perfis sem autorizacao para inspecionar logica antifraude recebem apenas
+        reason codes, sem features, pesos ou versoes de modelo.
+      security:
+        - bearerAuth: [antifraude.score.explain]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScoreRequest'
+      responses:
+        '200':
+          description: Decisao com explicabilidade, filtrada pelo perfil do consumidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScoreResponseV2'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: true
+      description: Identificador de correlacao propagado para tracing e auditoria.
+      schema:
+        type: string
+        minLength: 1
+    IdempotencyKey:
+      name: X-Idempotency-Key
+      in: header
+      required: false
+      description: Reenvio com a mesma chave retorna a decisao original, sem reavaliacao.
+      schema:
+        type: string
+        minLength: 1
+
+  schemas:
+    ScoreRequest:
+      type: object
+      required: [transaction_id, subject_token, amount, currency, channel, product, occurred_at]
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+        subject_token:
+          type: string
+          minLength: 1
+          description: Identificador interno do titular ou CPF tokenizado. CPF em claro nao e aceito.
+        amount:
+          type: number
+          minimum: 0
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        channel:
+          type: string
+        product:
+          type: string
+        transaction_type:
+          type: string
+        installments:
+          type: integer
+          minimum: 0
+        occurred_at:
+          type: string
+          format: date-time
+        merchant:
+          $ref: '#/components/schemas/Merchant'
+        device:
+          $ref: '#/components/schemas/Device'
+        geo:
+          $ref: '#/components/schemas/Geo'
+
+    Merchant:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        mcc:
+          type: string
+
+    Device:
+      type: object
+      additionalProperties: false
+      properties:
+        fingerprint_token:
+          type: string
+        ip_hash:
+          type: string
+
+    Geo:
+      type: object
+      additionalProperties: false
+      properties:
+        country:
+          type: string
+        region:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        precision:
+          type: string
+
+    Decision:
+      type: string
+      enum: [approve, challenge, deny]
+
+    ScoreResponseV1:
+      type: object
+      required: [decision_final]
+      additionalProperties: false
+      properties:
+        decision_final:
+          $ref: '#/components/schemas/Decision'
+
+    ScoreResponseV2:
+      type: object
+      required: [decision, score, reason_codes]
+      additionalProperties: false
+      properties:
+        decision:
+          $ref: '#/components/schemas/Decision'
+        decision_final:
+          allOf:
+            - $ref: '#/components/schemas/Decision'
+          description: Mantido como alias de decision para facilitar migracao de consumidores da v1.
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Probabilidade calibrada consolidada.
+        reason_codes:
+          type: array
+          description: Sempre presente. Codigos estaveis e inteligiveis, base para revisao de decisao automatizada.
+          items:
+            type: string
+        signals:
+          type: array
+          description: Omitido para perfis sem autorizacao de inspecao da logica antifraude.
+          items:
+            $ref: '#/components/schemas/Signal'
+        features:
+          type: object
+          description: Features usadas na decisao, com mascaramento aplicado. Omitido para perfis nao autorizados.
+          additionalProperties: true
+        feature_weights:
+          type: object
+          description: Contribuicao por feature. Omitido para perfis nao autorizados.
+          additionalProperties:
+            type: number
+        model_versions:
+          $ref: '#/components/schemas/ModelVersions'
+        cohort:
+          type: string
+          enum: [sem_historico, historico_minimo, historico_parcial, historico_pleno]
+          description: Faixa de historico aplicada pela politica de cold start.
+
+    Signal:
+      type: object
+      required: [code, source, outcome]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        source:
+          type: string
+          enum: [hard_rule, business_rule, hbos, global_model, cold_start_model, graph, device, geo, blocklist, bureau]
+        outcome:
+          type: string
+          enum: [triggered, not_triggered, unavailable]
+        severity:
+          type: string
+          enum: [info, low, medium, high, critical]
+
+    ModelVersions:
+      type: object
+      description: Retornado apenas quando o perfil do consumidor permite. Omitido caso contrario.
+      additionalProperties: false
+      properties:
+        hbos_bundle_version:
+          type: string
+          nullable: true
+        global_model_version:
+          type: string
+          nullable: true
+        cold_start_model_version:
+          type: string
+          nullable: true
+        calibration_version:
+          type: string
+          nullable: true
+        policy_version:
+          type: string
+          nullable: true
+
+    Error:
+      type: object
+      required: [reason_code, message]
+      additionalProperties: false
+      properties:
+        reason_code:
+          type: string
+          description: Codigo estavel do erro, auditavel.
+        message:
+          type: string
+        correlation_id:
+          type: string
+
+  responses:
+    ValidationError:
+      description: Payload invalido. Rejeicao controlada, com reason code e evidencia auditavel.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Credencial ausente ou invalida.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Perfil sem autorizacao para o nivel de explicabilidade solicitado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: Payload sintaticamente valido, porem semanticamente inconsistente.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: Dependencia critica indisponivel. Resposta segue a politica de fallback definida.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

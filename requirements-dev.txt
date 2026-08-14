@@ -1,0 +1,4 @@
+# Dependencias para validar os contratos versionados (scripts/validate_contracts.py).
+jsonschema>=4.23.0
+PyYAML>=6.0.2
+openapi-spec-validator>=0.7.1
