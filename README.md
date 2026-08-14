@@ -38,6 +38,20 @@ Todo documento aqui separa explicitamente **AS-IS** (o que existe), **Lacuna/Ris
 
 - [Roadmap por fases com critérios de aceite](docs/roadmap.md)
 
+## Validação dos contratos
+
+Os contratos versionados são validados por script, para que a divergência entre documentação e
+schema falhe de forma visível:
+
+```bash
+pip install -r requirements-dev.txt
+python3 scripts/validate_contracts.py
+```
+
+As verificações cobrem a validade do JSON Schema e do OpenAPI, a conformidade do exemplo
+documentado do evento com o schema, a restrição da resposta v1 a `decision_final` e a ausência de
+CPF em claro em qualquer contrato.
+
 ## Ordem de prioridade acordada
 
 1. Operacionalizar `challenge` (com a instrumentação de telemetria e shadow em conjunto).
