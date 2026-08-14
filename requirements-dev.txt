@@ -1,0 +1,4 @@
+# Dependencias apenas para validar os contratos documentados (tools/validate_contracts.py).
+# Nenhuma dependencia de runtime do motor antifraude e declarada aqui.
+jsonschema==4.26.0
+PyYAML==6.0.1

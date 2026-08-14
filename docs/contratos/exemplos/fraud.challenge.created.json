@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "evt_0f7c1a94d3b24e0a",
+  "event_type": "fraud.challenge.created",
+  "occurred_at": "2026-08-14T19:01:44.802Z",
+  "idempotency_key": "txn_2026081419014477301:corr_51c8ef0a2d7b4139",
+  "transaction_id": "txn_2026081419014477301",
+  "correlation_id": "corr_51c8ef0a2d7b4139",
+  "subject": {
+    "internal_id": "cust_991047",
+    "cpf_token": "tok_4c7ad0e91b62",
+    "relationship_days": 3
+  },
+  "initial_decision": "challenge",
+  "scores": {
+    "hbos": null,
+    "xgboost": 0.62,
+    "consolidated": 0.58
+  },
+  "history_confidence": "none",
+  "rules_triggered": [
+    {
+      "rule_id": "R83",
+      "rule_version": "3",
+      "severity": "hard_review",
+      "reason_code": "RC_RULE_83_TRIGGERED",
+      "evidence": "transacao elegivel ao motor de modelos pelo criterio da regra 83"
+    },
+    {
+      "rule_id": "R117_NEW_MERCHANT",
+      "rule_version": "2",
+      "severity": "soft",
+      "reason_code": "RC_NEW_MERCHANT",
+      "evidence": "primeiro uso do estabelecimento pelo titular"
+    }
+  ],
+  "signals": [
+    { "code": "device_first_seen", "family": "device", "value": true, "weight": 0.18 },
+    { "code": "amount_vs_channel_p95", "family": "amount", "value": 0.81, "weight": 0.22 },
+    { "code": "merchant_first_seen", "family": "merchant", "value": true, "weight": 0.11 }
+  ],
+  "features": {
+    "amount": 1450.0,
+    "installments": 3,
+    "hour_of_day": 19,
+    "merchant_is_new_for_subject": true,
+    "device_is_new_for_subject": true,
+    "subject_transaction_count_90d": 2
+  },
+  "feature_weights": {
+    "amount": 0.22,
+    "device_is_new_for_subject": 0.18,
+    "installments": 0.09,
+    "merchant_is_new_for_subject": 0.11,
+    "hbos_score": 0.0
+  },
+  "reason_codes": [
+    "RC_COLD_START",
+    "RC_COLD_START_STEPUP_REQUIRED",
+    "RC_XGB_HIGH_RISK",
+    "RC_INTERMEDIATE_RISK"
+  ],
+  "model_versions": {
+    "hbos": null,
+    "xgboost": { "version": "xgb-global-2026.07.3", "registry_state": "champion" }
+  },
+  "policy_version": "policy-2026.08.1",
+  "layers_executed": [
+    "payload_validation",
+    "feature_computation",
+    "hard_rules",
+    "eligibility_gate",
+    "business_rules",
+    "xgboost_global",
+    "decision_consolidation"
+  ],
+  "layers_skipped": ["hbos_individual"],
+  "terminal_layer": "decision_consolidation",
+  "risk_escalating_layer": "xgboost_global",
+  "transaction_context": {
+    "amount": 1450.0,
+    "currency": "BRL",
+    "channel": "ecommerce",
+    "product": "private_label_credit",
+    "transaction_type": "purchase",
+    "installments": 3,
+    "occurred_at": "2026-08-14T19:01:44.641Z",
+    "merchant": {
+      "merchant_id": "mer_558201",
+      "mcc": "5732",
+      "is_new_for_subject": true
+    },
+    "device": {
+      "device_token": "dev_tok_7a1c9e",
+      "is_new_for_subject": true,
+      "intelligence_available": true
+    },
+    "geo": {
+      "country": "BR",
+      "region": "SP",
+      "precision": "medium",
+      "consistent_with_history": null
+    }
+  },
+  "stepup_context": {
+    "eligible": true,
+    "available_channels": ["whatsapp", "push"],
+    "timeout_seconds": 300
+  }
+}

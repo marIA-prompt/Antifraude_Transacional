@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "evt_6b90d2118ac74f37",
+  "event_type": "challenge.outcome.recorded",
+  "occurred_at": "2026-08-14T19:04:12.338Z",
+  "idempotency_key": "txn_2026081419014477301:corr_51c8ef0a2d7b4139",
+  "transaction_id": "txn_2026081419014477301",
+  "correlation_id": "corr_51c8ef0a2d7b4139",
+  "initial_decision": "challenge",
+  "final_outcome": "approve",
+  "decided_by": "workflow_consolidation",
+  "reason_codes": ["RC_STEPUP_CONFIRMED", "RC_COLD_START"],
+  "validators": [
+    {
+      "schema_version": "1.0.0",
+      "validator_id": "additional_rules",
+      "validator_version": "2.1.0",
+      "transaction_id": "txn_2026081419014477301",
+      "correlation_id": "corr_51c8ef0a2d7b4139",
+      "started_at": "2026-08-14T19:01:44.930Z",
+      "completed_at": "2026-08-14T19:01:44.988Z",
+      "duration_ms": 58,
+      "status": "completed",
+      "outcome": "escalate",
+      "confidence": "medium",
+      "reason_codes": ["RC_COLD_START_STEPUP_REQUIRED"],
+      "fallback_applied": false,
+      "terminates_workflow": false
+    },
+    {
+      "schema_version": "1.0.0",
+      "validator_id": "stepup",
+      "validator_version": "1.0.3",
+      "transaction_id": "txn_2026081419014477301",
+      "correlation_id": "corr_51c8ef0a2d7b4139",
+      "started_at": "2026-08-14T19:01:48.004Z",
+      "completed_at": "2026-08-14T19:04:11.902Z",
+      "duration_ms": 143898,
+      "status": "completed",
+      "outcome": "approve",
+      "confidence": "high",
+      "reason_codes": ["RC_STEPUP_CONFIRMED"],
+      "fallback_applied": false,
+      "terminates_workflow": false,
+      "checkpoint_id": "chk_51c8ef0a_stepup_01"
+    }
+  ],
+  "stepup": {
+    "attempted": true,
+    "channel": "whatsapp",
+    "result": "confirmed",
+    "attempts": 1,
+    "waited_ms": 143898
+  },
+  "human_review": null,
+  "notification": {
+    "sent": true,
+    "channel": "whatsapp",
+    "idempotency_key": "notif:txn_2026081419014477301:approve",
+    "sent_at": "2026-08-14T19:04:12.310Z",
+    "suppressed_reason": null
+  },
+  "reversal": true,
+  "total_duration_ms": 147536,
+  "audit_reference": "audit_challenge_2026081419014477301"
+}

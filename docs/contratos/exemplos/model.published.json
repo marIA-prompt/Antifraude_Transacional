@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "evt_ac31f5d0e7b84c96",
+  "event_type": "model.published",
+  "occurred_at": "2026-08-14T03:12:07.551Z",
+  "model_name": "xgboost_global_fraud",
+  "model_kind": "xgboost_global",
+  "model_version": "xgb-global-2026.08.0",
+  "previous_version": "xgb-global-2026.07.3",
+  "registry_state": "champion",
+  "artifact": {
+    "uri": "abfss://models/antifraude/xgboost_global_fraud/xgb-global-2026.08.0/bundle.tar.zst",
+    "checksum": {
+      "algorithm": "sha256",
+      "value": "3f1c8a2e5b7d904617cbe2a4f80d15937ac6be08d21f4e5c7a9b0d3e6f81c24a"
+    },
+    "size_bytes": 18734592,
+    "integrity_verified": true,
+    "smoke_test_passed": true
+  },
+  "feature_schema": {
+    "schema_id": "features_authorization",
+    "schema_version": "7",
+    "schema_hash": "b91d47ac0e5f",
+    "compatible": true
+  },
+  "training_window": {
+    "start": "2025-01-01",
+    "end": "2025-09-30",
+    "validation_start": "2025-10-01",
+    "validation_end": "2025-10-31",
+    "temporal_test_start": "2025-11-01",
+    "temporal_test_end": "2025-11-30"
+  },
+  "label_snapshot_id": "labels_2026-07-31_matured_60d",
+  "validation_metrics": {
+    "pr_auc": 0.412,
+    "roc_auc": 0.947,
+    "recall_fraud": 0.681,
+    "precision": 0.233,
+    "false_positive_rate": 0.019,
+    "false_negative_rate": 0.319,
+    "calibration_error": 0.024,
+    "challenge_rate": 0.041,
+    "latency_p95_ms": 18.4,
+    "cohort_metrics_available": true
+  },
+  "cache_invalidation": {
+    "scope": "global",
+    "reload_mode": "staggered_eager",
+    "convergence_deadline_seconds": 120
+  },
+  "published_by": "pipeline_treino_antifraude",
+  "rollback_of": null,
+  "approval_reference": "promocao-2026-08-14-comite-risco"
+}

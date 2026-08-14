@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antifraude.internal/schemas/decision-trace/1.0.0",
+  "title": "Decision trace",
+  "description": "Registro obrigatorio de uma decisao online, emitido para toda transacao avaliada, inclusive approve. Score de camada nao executada e null, nunca 0.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "correlation_id",
+    "occurred_at",
+    "subject",
+    "decision",
+    "terminal_layer",
+    "layers",
+    "scores",
+    "history_confidence",
+    "reason_codes",
+    "model_versions",
+    "policy_version"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "transaction_id": { "$ref": "#/$defs/id" },
+    "correlation_id": { "$ref": "#/$defs/id" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "decision": { "$ref": "#/$defs/decision" },
+    "terminal_layer": {
+      "description": "Camada que encerrou a decisao.",
+      "$ref": "#/$defs/layer"
+    },
+    "risk_escalating_layer": {
+      "description": "Camada que elevou o risco, quando distinta da terminal.",
+      "oneOf": [{ "$ref": "#/$defs/layer" }, { "type": "null" }]
+    },
+    "short_circuited": { "type": "boolean" },
+    "layers": {
+      "description": "Uma entrada por camada da cascata, incluindo as nao executadas.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["layer", "status"],
+        "properties": {
+          "layer": { "$ref": "#/$defs/layer" },
+          "status": { "enum": ["executed", "skipped", "failed"] },
+          "duration_ms": { "type": ["number", "null"], "minimum": 0 },
+          "skip_reason": {
+            "type": ["string", "null"],
+            "enum": ["short_circuit", "not_applicable", "insufficient_data", "disabled", null]
+          }
+        }
+      }
+    },
+    "scores": { "$ref": "#/$defs/scores" },
+    "history_confidence": { "$ref": "#/$defs/history_confidence" },
+    "rules_triggered": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule" }
+    },
+    "signals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/signal" }
+    },
+    "features": {
+      "description": "Features relevantes para a decisao. Sem PII direta.",
+      "type": "object",
+      "additionalProperties": { "type": ["number", "string", "boolean", "null"] }
+    },
+    "feature_weights": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "reason_codes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/reason_code" }
+    },
+    "model_versions": { "$ref": "#/$defs/model_versions" },
+    "policy_version": { "type": "string", "minLength": 1 },
+    "fallbacks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["layer", "reason_code"],
+        "properties": {
+          "layer": { "$ref": "#/$defs/layer" },
+          "reason_code": { "$ref": "#/$defs/reason_code" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "shadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sampled"],
+      "properties": {
+        "sampled": { "type": "boolean" },
+        "sample_rate": { "type": "number", "minimum": 0, "maximum": 0.05 },
+        "full_cascade_evaluated": { "type": "boolean" }
+      }
+    },
+    "latency_ms_total": { "type": "number", "minimum": 0 }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["internal_id"],
+      "properties": {
+        "internal_id": { "type": "string", "minLength": 1 },
+        "cpf_token": {
+          "description": "CPF tokenizado. CPF em claro nao e permitido.",
+          "type": "string",
+          "pattern": "^tok_[A-Za-z0-9_-]{8,}$"
+        },
+        "relationship_days": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "decision": { "enum": ["approve", "challenge", "deny"] },
+    "layer": {
+      "enum": [
+        "payload_validation",
+        "feature_computation",
+        "hard_rules",
+        "eligibility_gate",
+        "hbos_individual",
+        "business_rules",
+        "xgboost_global",
+        "decision_consolidation"
+      ]
+    },
+    "history_confidence": { "enum": ["none", "low", "medium", "high"] },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hbos", "xgboost", "consolidated"],
+      "properties": {
+        "hbos": { "$ref": "#/$defs/nullable_score" },
+        "xgboost": { "$ref": "#/$defs/nullable_score" },
+        "consolidated": { "$ref": "#/$defs/nullable_score" }
+      }
+    },
+    "nullable_score": {
+      "description": "null quando a camada nao foi executada.",
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "severity"],
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1 },
+        "rule_version": { "type": "string" },
+        "severity": { "enum": ["hard_block", "hard_review", "soft"] },
+        "reason_code": { "$ref": "#/$defs/reason_code" },
+        "evidence": { "type": "string" }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "family"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "family": { "enum": ["device", "geo", "velocity", "amount", "merchant", "behavior", "identity"] },
+        "value": { "type": ["number", "string", "boolean", "null"] },
+        "weight": { "type": "number" }
+      }
+    },
+    "model_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hbos", "xgboost"],
+      "properties": {
+        "hbos": { "$ref": "#/$defs/nullable_model_ref" },
+        "xgboost": { "$ref": "#/$defs/nullable_model_ref" },
+        "challenger": { "$ref": "#/$defs/nullable_model_ref" }
+      }
+    },
+    "nullable_model_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version"],
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "bundle_id": { "type": "string" },
+            "registry_state": { "enum": ["candidate", "challenger", "champion", "deprecated", "rolled_back"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "reason_code": { "type": "string", "pattern": "^RC_[A-Z0-9_]{2,48}$" }
+  }
+}

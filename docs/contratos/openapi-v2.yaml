@@ -1,0 +1,465 @@
+openapi: 3.0.3
+info:
+  title: Motor de Score Antifraude — API v2 (explicabilidade)
+  version: 2.0.0
+  description: |
+    TO-BE. Não está em produção.
+
+    Restabelece as saídas previstas na especificação original (`score`, `decision`, `signals`,
+    `features`, `feature_weights`), acrescenta reason codes e versões de modelo, e o faz sob
+    autenticação, autorização por perfil e mascaramento aplicado no serviço.
+
+    Regras de contrato:
+      - a v1 permanece inalterada e retrocompatível;
+      - o nível de detalhe é função do escopo do consumidor, não do endpoint;
+      - perfil externo nunca recebe threshold, nome de regra interna, peso de feature nem versão de
+        modelo;
+      - consultas de explicabilidade são auditadas por consumidor e transação;
+      - rate limit e detecção de sondagem são obrigatórios: consulta repetida é vetor de engenharia
+        reversa do motor.
+
+    A trilha de `challenge` não depende desta API: ela consome `fraud.challenge.created`.
+servers:
+  - url: https://antifraude.internal
+    description: Rede interna
+tags:
+  - name: scoring
+  - name: explicabilidade
+paths:
+  /v2/authorization/score:
+    post:
+      operationId: scoreTransactionV2
+      tags: [scoring]
+      summary: Avalia uma transação e retorna decisão com explicabilidade autorizada
+      description: |
+        Mesmo caminho crítico da v1, com resposta enriquecida. O enriquecimento não introduz chamada
+        externa: usa apenas o que a cascata já computou, preservando o alvo de p95 < 100 ms.
+      security:
+        - oauth2: [scoring.decide]
+      parameters:
+        - name: X-Correlation-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: X-Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScoreRequest'
+      responses:
+        '200':
+          description: Decisão avaliada, com detalhe conforme o escopo do consumidor
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+              description: Requisições restantes na janela.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScoreResponseV2'
+              examples:
+                perfil_operacao:
+                  summary: Consumidor com escopo explainability.read
+                  value:
+                    decision: challenge
+                    decision_final: challenge
+                    score: 0.58
+                    reason_codes:
+                      - RC_COLD_START
+                      - RC_COLD_START_STEPUP_REQUIRED
+                      - RC_XGB_HIGH_RISK
+                      - RC_INTERMEDIATE_RISK
+                    signals:
+                      - code: device_first_seen
+                        family: device
+                        weight: 0.18
+                      - code: amount_vs_channel_p95
+                        family: amount
+                        weight: 0.22
+                    features:
+                      amount: 1450.0
+                      installments: 3
+                      device_is_new_for_subject: true
+                    feature_weights:
+                      amount: 0.22
+                      device_is_new_for_subject: 0.18
+                      hbos_score: 0.0
+                    model_versions:
+                      hbos: null
+                      xgboost: xgb-global-2026.07.3
+                    policy_version: policy-2026.08.1
+                    history_confidence: none
+                    correlation_id: corr_51c8ef0a2d7b4139
+                perfil_externo:
+                  summary: Consumidor sem escopo de explicabilidade (mascarado no serviço)
+                  value:
+                    decision: challenge
+                    decision_final: challenge
+                    reason_codes:
+                      - RC_PUBLIC_CONFIRMATION_REQUIRED
+                    correlation_id: corr_51c8ef0a2d7b4139
+        '400':
+          description: Payload inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Escopo insuficiente para o nível de detalhe solicitado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Limite de requisições excedido ou padrão de sondagem detectado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v2/decisions/{transaction_id}/explanation:
+    get:
+      operationId: getDecisionExplanation
+      tags: [explicabilidade]
+      summary: Recupera a explicação de uma decisão já tomada
+      description: |
+        Reconstrói a explicação a partir do decision trace, com as versões de modelo e de política
+        vigentes no momento da decisão. Sustenta contestação, auditoria e pedido de revisão de
+        decisão automatizada. Todo acesso é registrado com consumidor, finalidade e transação.
+      security:
+        - oauth2: [explainability.read]
+      parameters:
+        - name: transaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: X-Purpose
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: [contestacao, auditoria, operacao_fraude, revisao_titular]
+          description: Finalidade declarada do acesso, registrada na trilha de auditoria.
+      responses:
+        '200':
+          description: Explicação da decisão
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionExplanation'
+        '401':
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Escopo ou finalidade não autorizados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Transação não encontrada ou fora da janela de retenção
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Limite de requisições excedido ou padrão de sondagem detectado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: |
+        Escopos determinam o nível de detalhe devolvido. O mascaramento é aplicado no serviço.
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.internal/oauth2/token
+          scopes:
+            scoring.decide: Solicitar decisão de autorização
+            explainability.read: Ler score, sinais, features e pesos
+            explainability.models.read: Ler versões de modelo e de política
+  schemas:
+    ScoreRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - transaction_id
+        - subject
+        - amount
+        - currency
+        - channel
+        - product
+        - occurred_at
+      properties:
+        transaction_id:
+          type: string
+          maxLength: 128
+        subject:
+          type: object
+          additionalProperties: false
+          required:
+            - cpf
+          properties:
+            cpf:
+              type: string
+              pattern: '^[0-9]{11}$'
+            internal_id:
+              type: string
+        amount:
+          type: number
+          minimum: 0
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        channel:
+          type: string
+        product:
+          type: string
+        transaction_type:
+          type: string
+        installments:
+          type: integer
+          minimum: 1
+        occurred_at:
+          type: string
+          format: date-time
+        merchant:
+          type: object
+          additionalProperties: false
+          properties:
+            merchant_id:
+              type: string
+            mcc:
+              type: string
+        device:
+          type: object
+          additionalProperties: false
+          properties:
+            device_id:
+              type: string
+            ip:
+              type: string
+            user_agent:
+              type: string
+        geo:
+          type: object
+          additionalProperties: false
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+            country:
+              type: string
+              pattern: '^[A-Z]{2}$'
+    ScoreResponseV2:
+      type: object
+      additionalProperties: false
+      required:
+        - decision
+        - decision_final
+        - reason_codes
+        - correlation_id
+      properties:
+        decision:
+          type: string
+          enum: [approve, challenge, deny]
+        decision_final:
+          type: string
+          enum: [approve, challenge, deny]
+          description: Mantido para paridade com a v1 e migração sem ambiguidade.
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+          description: Score consolidado. Ausente para consumidor sem escopo de explicabilidade.
+        reason_codes:
+          type: array
+          items:
+            type: string
+            pattern: '^RC_[A-Z0-9_]{2,48}$'
+          description: |
+            Perfil externo recebe apenas códigos `RC_PUBLIC_*`. Ver catálogo em reason-codes.md.
+        signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Signal'
+        features:
+          type: object
+          additionalProperties: true
+          description: Features relevantes, sem PII direta.
+        feature_weights:
+          type: object
+          additionalProperties:
+            type: number
+        history_confidence:
+          type: string
+          enum: [none, low, medium, high]
+        model_versions:
+          type: object
+          additionalProperties: false
+          description: Exige escopo explainability.models.read.
+          properties:
+            hbos:
+              type: string
+              nullable: true
+            xgboost:
+              type: string
+              nullable: true
+        policy_version:
+          type: string
+        correlation_id:
+          type: string
+    Signal:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - family
+      properties:
+        code:
+          type: string
+        family:
+          type: string
+          enum: [device, geo, velocity, amount, merchant, behavior, identity]
+        weight:
+          type: number
+        value:
+          nullable: true
+          oneOf:
+            - type: number
+            - type: string
+            - type: boolean
+    DecisionExplanation:
+      type: object
+      additionalProperties: false
+      required:
+        - transaction_id
+        - correlation_id
+        - decided_at
+        - decision
+        - reason_codes
+        - terminal_layer
+        - policy_version
+      properties:
+        transaction_id:
+          type: string
+        correlation_id:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+        decision:
+          type: string
+          enum: [approve, challenge, deny]
+        score:
+          type: number
+          nullable: true
+        reason_codes:
+          type: array
+          items:
+            type: string
+            pattern: '^RC_[A-Z0-9_]{2,48}$'
+        signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Signal'
+        features:
+          type: object
+          additionalProperties: true
+        feature_weights:
+          type: object
+          additionalProperties:
+            type: number
+        rules_triggered:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              rule_id:
+                type: string
+              severity:
+                type: string
+                enum: [hard_block, hard_review, soft]
+              reason_code:
+                type: string
+              evidence:
+                type: string
+        layers_executed:
+          type: array
+          items:
+            type: string
+        layers_skipped:
+          type: array
+          items:
+            type: string
+        terminal_layer:
+          type: string
+        model_versions:
+          type: object
+          additionalProperties: false
+          properties:
+            hbos:
+              type: string
+              nullable: true
+            xgboost:
+              type: string
+              nullable: true
+        policy_version:
+          type: string
+        challenge_outcome:
+          type: object
+          additionalProperties: false
+          description: Presente quando a decisão inicial foi `challenge` e a trilha já concluiu.
+          properties:
+            final_outcome:
+              type: string
+              enum: [approve, deny, escalate]
+            decided_by:
+              type: string
+              enum: [workflow_consolidation, early_termination, human_review, policy_timeout]
+            reason_codes:
+              type: array
+              items:
+                type: string
+            resolved_at:
+              type: string
+              format: date-time
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        correlation_id:
+          type: string

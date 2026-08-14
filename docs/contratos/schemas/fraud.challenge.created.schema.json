@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antifraude.internal/schemas/fraud.challenge.created/1.0.0",
+  "title": "fraud.challenge.created",
+  "description": "Evento publicado pelo motor quando a decisao online resulta em challenge. E a unica fonte de contexto da trilha assincrona: a orquestracao nao depende da resposta HTTP v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "idempotency_key",
+    "transaction_id",
+    "correlation_id",
+    "subject",
+    "initial_decision",
+    "scores",
+    "history_confidence",
+    "rules_triggered",
+    "signals",
+    "features",
+    "feature_weights",
+    "reason_codes",
+    "model_versions",
+    "policy_version",
+    "layers_executed",
+    "terminal_layer",
+    "transaction_context"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "event_type": { "const": "fraud.challenge.created" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "idempotency_key": {
+      "description": "Chave de idempotencia da trilha. Derivada de transaction_id + correlation_id.",
+      "type": "string",
+      "minLength": 1
+    },
+    "transaction_id": { "$ref": "#/$defs/id" },
+    "correlation_id": { "$ref": "#/$defs/id" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "initial_decision": { "const": "challenge" },
+    "scores": { "$ref": "#/$defs/scores" },
+    "history_confidence": { "enum": ["none", "low", "medium", "high"] },
+    "rules_triggered": { "type": "array", "items": { "$ref": "#/$defs/rule" } },
+    "signals": { "type": "array", "items": { "$ref": "#/$defs/signal" } },
+    "features": {
+      "description": "Apenas as features relevantes para os validadores. Minimizacao LGPD: nao replicar o payload completo.",
+      "type": "object",
+      "additionalProperties": { "type": ["number", "string", "boolean", "null"] }
+    },
+    "feature_weights": { "type": "object", "additionalProperties": { "type": "number" } },
+    "reason_codes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/reason_code" } },
+    "model_versions": { "$ref": "#/$defs/model_versions" },
+    "policy_version": { "type": "string", "minLength": 1 },
+    "layers_executed": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/layer" } },
+    "layers_skipped": { "type": "array", "items": { "$ref": "#/$defs/layer" } },
+    "terminal_layer": { "$ref": "#/$defs/layer" },
+    "risk_escalating_layer": { "oneOf": [{ "$ref": "#/$defs/layer" }, { "type": "null" }] },
+    "transaction_context": {
+      "description": "Contexto necessario aos validadores, sem dado de contato do titular.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency", "channel", "product", "occurred_at"],
+      "properties": {
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "channel": { "type": "string", "minLength": 1 },
+        "product": { "type": "string", "minLength": 1 },
+        "transaction_type": { "type": "string" },
+        "installments": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "merchant": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "merchant_id": { "type": "string" },
+            "mcc": { "type": "string" },
+            "is_new_for_subject": { "type": "boolean" }
+          }
+        },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "device_token": { "type": "string" },
+            "is_new_for_subject": { "type": "boolean" },
+            "intelligence_available": { "type": "boolean" }
+          }
+        },
+        "geo": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "country": { "type": "string", "pattern": "^[A-Z]{2}$" },
+            "region": { "type": "string" },
+            "precision": { "enum": ["high", "medium", "low", "unknown"] },
+            "consistent_with_history": { "type": ["boolean", "null"] }
+          }
+        }
+      }
+    },
+    "stepup_context": {
+      "description": "Elegibilidade de step-up. Canal de contato nao trafega no evento: resolvido pelo servico de notificacao.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eligible": { "type": "boolean" },
+        "available_channels": {
+          "type": "array",
+          "items": { "enum": ["whatsapp", "push", "sms", "voice", "app"] }
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["internal_id"],
+      "properties": {
+        "internal_id": { "type": "string", "minLength": 1 },
+        "cpf_token": { "type": "string", "pattern": "^tok_[A-Za-z0-9_-]{8,}$" },
+        "relationship_days": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "layer": {
+      "enum": [
+        "payload_validation",
+        "feature_computation",
+        "hard_rules",
+        "eligibility_gate",
+        "hbos_individual",
+        "business_rules",
+        "xgboost_global",
+        "decision_consolidation"
+      ]
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hbos", "xgboost", "consolidated"],
+      "properties": {
+        "hbos": { "$ref": "#/$defs/nullable_score" },
+        "xgboost": { "$ref": "#/$defs/nullable_score" },
+        "consolidated": { "$ref": "#/$defs/nullable_score" }
+      }
+    },
+    "nullable_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "severity"],
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1 },
+        "rule_version": { "type": "string" },
+        "severity": { "enum": ["hard_block", "hard_review", "soft"] },
+        "reason_code": { "$ref": "#/$defs/reason_code" },
+        "evidence": { "type": "string" }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "family"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "family": { "enum": ["device", "geo", "velocity", "amount", "merchant", "behavior", "identity"] },
+        "value": { "type": ["number", "string", "boolean", "null"] },
+        "weight": { "type": "number" }
+      }
+    },
+    "model_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hbos", "xgboost"],
+      "properties": {
+        "hbos": { "$ref": "#/$defs/nullable_model_ref" },
+        "xgboost": { "$ref": "#/$defs/nullable_model_ref" },
+        "challenger": { "$ref": "#/$defs/nullable_model_ref" }
+      }
+    },
+    "nullable_model_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version"],
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "bundle_id": { "type": "string" },
+            "registry_state": { "enum": ["candidate", "challenger", "champion", "deprecated", "rolled_back"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "reason_code": { "type": "string", "pattern": "^RC_[A-Z0-9_]{2,48}$" }
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antifraude.internal/schemas/model.published/1.0.0",
+  "title": "model.published",
+  "description": "Evento emitido apos publicacao atomica e promocao de uma versao de modelo. Dispara invalidacao de cache e reload sem restart manual.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "model_name",
+    "model_kind",
+    "model_version",
+    "registry_state",
+    "artifact",
+    "feature_schema",
+    "cache_invalidation",
+    "published_by"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "event_type": { "const": "model.published" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "model_name": { "type": "string", "minLength": 1 },
+    "model_kind": { "enum": ["hbos_individual", "xgboost_global", "challenger"] },
+    "model_version": { "type": "string", "minLength": 1 },
+    "previous_version": { "type": ["string", "null"] },
+    "registry_state": {
+      "enum": ["candidate", "challenger", "champion", "deprecated", "rolled_back"]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "checksum", "integrity_verified"],
+      "properties": {
+        "uri": {
+          "description": "Caminho versionado e imutavel. A ativacao troca o ponteiro, nunca sobrescreve o artefato.",
+          "type": "string",
+          "minLength": 1
+        },
+        "checksum": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "value"],
+          "properties": {
+            "algorithm": { "enum": ["sha256", "sha512"] },
+            "value": { "type": "string", "pattern": "^[a-f0-9]{64,128}$" }
+          }
+        },
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "integrity_verified": { "const": true },
+        "smoke_test_passed": { "type": "boolean" }
+      }
+    },
+    "feature_schema": {
+      "description": "Compatibilidade verificada antes da publicacao. Divergencia silenciosa de schema produz score sem sentido.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_id", "schema_version", "compatible"],
+      "properties": {
+        "schema_id": { "type": "string", "minLength": 1 },
+        "schema_version": { "type": "string", "minLength": 1 },
+        "schema_hash": { "type": "string" },
+        "compatible": { "const": true }
+      }
+    },
+    "training_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "format": "date" },
+        "end": { "type": "string", "format": "date" },
+        "validation_start": { "type": "string", "format": "date" },
+        "validation_end": { "type": "string", "format": "date" },
+        "temporal_test_start": { "type": "string", "format": "date" },
+        "temporal_test_end": { "type": "string", "format": "date" }
+      }
+    },
+    "label_snapshot_id": {
+      "description": "Instantaneo de rotulos usado. Rotulo amadurece: metrica sem instantaneo nao e reproduzivel.",
+      "type": ["string", "null"]
+    },
+    "validation_metrics": {
+      "description": "Obrigatorio para modelos supervisionados. HBOS individual usa metricas proprias de anomalia.",
+      "type": "object",
+      "properties": {
+        "pr_auc": { "type": "number" },
+        "roc_auc": { "type": "number" },
+        "recall_fraud": { "type": "number" },
+        "precision": { "type": "number" },
+        "false_positive_rate": { "type": "number" },
+        "false_negative_rate": { "type": "number" },
+        "calibration_error": { "type": "number" },
+        "challenge_rate": { "type": "number" },
+        "latency_p95_ms": { "type": "number" },
+        "cohort_metrics_available": { "type": "boolean" }
+      }
+    },
+    "cache_invalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "reload_mode"],
+      "properties": {
+        "scope": {
+          "description": "by_key para retreino de bundles por CPF; global apenas quando o schema de features muda.",
+          "enum": ["global", "by_key"]
+        },
+        "keys": { "type": "array", "items": { "type": "string" } },
+        "reload_mode": { "enum": ["lazy", "eager", "staggered_eager"] },
+        "convergence_deadline_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "published_by": { "type": "string", "minLength": 1 },
+    "rollback_of": { "type": ["string", "null"] },
+    "approval_reference": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "description": "Promocao a champion exige metricas de validacao e instantaneo de rotulos para modelo supervisionado.",
+      "if": {
+        "properties": {
+          "registry_state": { "const": "champion" },
+          "model_kind": { "const": "xgboost_global" }
+        },
+        "required": ["registry_state", "model_kind"]
+      },
+      "then": { "required": ["validation_metrics", "label_snapshot_id", "training_window"] }
+    },
+    {
+      "description": "Invalidacao por chave exige a lista de chaves.",
+      "if": {
+        "properties": {
+          "cache_invalidation": {
+            "properties": { "scope": { "const": "by_key" } },
+            "required": ["scope"]
+          }
+        },
+        "required": ["cache_invalidation"]
+      },
+      "then": {
+        "properties": {
+          "cache_invalidation": {
+            "required": ["keys"],
+            "properties": { "keys": { "minItems": 1 } }
+          }
+        }
+      }
+    }
+  ]
+}

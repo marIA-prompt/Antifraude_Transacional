@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0.0",
+  "validator_id": "blocklist_bureau",
+  "validator_version": "1.4.0",
+  "transaction_id": "txn_2026081419014477301",
+  "correlation_id": "corr_51c8ef0a2d7b4139",
+  "started_at": "2026-08-14T19:01:45.010Z",
+  "completed_at": "2026-08-14T19:01:47.512Z",
+  "duration_ms": 2502,
+  "status": "timeout",
+  "outcome": "escalate",
+  "confidence": "low",
+  "reason_codes": ["RC_EXTERNAL_TIMEOUT", "RC_BLOCKLIST_UNAVAILABLE"],
+  "evidence": [
+    {
+      "source": "bureau_externo",
+      "description": "consulta excedeu o timeout de 2500 ms sem resposta; nenhuma conclusao de risco obtida",
+      "collected_at": "2026-08-14T19:01:47.512Z",
+      "reference": "req_bureau_2f81c0"
+    }
+  ],
+  "fallback_applied": true,
+  "fallback_reason_code": "RC_BLOCKLIST_UNAVAILABLE",
+  "error": {
+    "code": "UPSTREAM_TIMEOUT",
+    "message": "bureau nao respondeu dentro do timeout configurado",
+    "retryable": true
+  },
+  "terminates_workflow": false,
+  "checkpoint_id": "chk_51c8ef0a_bureau_01"
+}

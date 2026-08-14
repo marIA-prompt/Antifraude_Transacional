@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0.0",
+  "transaction_id": "txn_2026081418223141200",
+  "correlation_id": "corr_9d41a7c2b8f04e51",
+  "occurred_at": "2026-08-14T18:22:31.412Z",
+  "subject": {
+    "internal_id": "cust_884213",
+    "cpf_token": "tok_9f2b7c41aa5d",
+    "relationship_days": 1420
+  },
+  "decision": "approve",
+  "terminal_layer": "eligibility_gate",
+  "risk_escalating_layer": null,
+  "short_circuited": true,
+  "layers": [
+    { "layer": "payload_validation", "status": "executed", "duration_ms": 1.8 },
+    { "layer": "feature_computation", "status": "executed", "duration_ms": 14.2 },
+    { "layer": "hard_rules", "status": "executed", "duration_ms": 4.1 },
+    { "layer": "eligibility_gate", "status": "executed", "duration_ms": 2.6 },
+    { "layer": "hbos_individual", "status": "skipped", "duration_ms": null, "skip_reason": "short_circuit" },
+    { "layer": "business_rules", "status": "skipped", "duration_ms": null, "skip_reason": "short_circuit" },
+    { "layer": "xgboost_global", "status": "skipped", "duration_ms": null, "skip_reason": "short_circuit" },
+    { "layer": "decision_consolidation", "status": "executed", "duration_ms": 1.1 }
+  ],
+  "scores": {
+    "hbos": null,
+    "xgboost": null,
+    "consolidated": null
+  },
+  "history_confidence": "high",
+  "rules_triggered": [],
+  "signals": [],
+  "features": {
+    "amount": 89.9,
+    "installments": 1,
+    "hour_of_day": 15,
+    "merchant_is_new_for_subject": false,
+    "device_is_new_for_subject": false
+  },
+  "feature_weights": {},
+  "reason_codes": ["RC_NOT_ELIGIBLE_FOR_SCORING", "RC_APPROVE_LOW_RISK"],
+  "model_versions": {
+    "hbos": null,
+    "xgboost": null
+  },
+  "policy_version": "policy-2026.08.1",
+  "fallbacks": [],
+  "shadow": {
+    "sampled": false
+  },
+  "latency_ms_total": 26.9
+}

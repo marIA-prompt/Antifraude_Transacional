@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0.0",
+  "transaction_id": "txn_2026081419014477301",
+  "correlation_id": "corr_51c8ef0a2d7b4139",
+  "occurred_at": "2026-08-14T19:01:44.773Z",
+  "subject": {
+    "internal_id": "cust_991047",
+    "cpf_token": "tok_4c7ad0e91b62",
+    "relationship_days": 3
+  },
+  "decision": "challenge",
+  "terminal_layer": "decision_consolidation",
+  "risk_escalating_layer": "xgboost_global",
+  "short_circuited": false,
+  "layers": [
+    { "layer": "payload_validation", "status": "executed", "duration_ms": 2.1 },
+    { "layer": "feature_computation", "status": "executed", "duration_ms": 18.7 },
+    { "layer": "hard_rules", "status": "executed", "duration_ms": 5.3 },
+    { "layer": "eligibility_gate", "status": "executed", "duration_ms": 2.4 },
+    { "layer": "hbos_individual", "status": "skipped", "duration_ms": null, "skip_reason": "insufficient_data" },
+    { "layer": "business_rules", "status": "executed", "duration_ms": 6.9 },
+    { "layer": "xgboost_global", "status": "executed", "duration_ms": 17.4 },
+    { "layer": "decision_consolidation", "status": "executed", "duration_ms": 1.6 }
+  ],
+  "scores": {
+    "hbos": null,
+    "xgboost": 0.62,
+    "consolidated": 0.58
+  },
+  "history_confidence": "none",
+  "rules_triggered": [
+    {
+      "rule_id": "R83",
+      "rule_version": "3",
+      "severity": "hard_review",
+      "reason_code": "RC_RULE_83_TRIGGERED",
+      "evidence": "transacao elegivel ao motor de modelos pelo criterio da regra 83"
+    },
+    {
+      "rule_id": "R117_NEW_MERCHANT",
+      "rule_version": "2",
+      "severity": "soft",
+      "reason_code": "RC_NEW_MERCHANT",
+      "evidence": "primeiro uso do estabelecimento pelo titular"
+    }
+  ],
+  "signals": [
+    { "code": "device_first_seen", "family": "device", "value": true, "weight": 0.18 },
+    { "code": "amount_vs_channel_p95", "family": "amount", "value": 0.81, "weight": 0.22 },
+    { "code": "merchant_first_seen", "family": "merchant", "value": true, "weight": 0.11 }
+  ],
+  "features": {
+    "amount": 1450.0,
+    "installments": 3,
+    "hour_of_day": 19,
+    "merchant_is_new_for_subject": true,
+    "device_is_new_for_subject": true,
+    "geo_precision": "medium",
+    "subject_transaction_count_90d": 2
+  },
+  "feature_weights": {
+    "amount": 0.22,
+    "device_is_new_for_subject": 0.18,
+    "installments": 0.09,
+    "merchant_is_new_for_subject": 0.11,
+    "hbos_score": 0.0
+  },
+  "reason_codes": [
+    "RC_COLD_START",
+    "RC_COLD_START_STEPUP_REQUIRED",
+    "RC_XGB_HIGH_RISK",
+    "RC_INTERMEDIATE_RISK"
+  ],
+  "model_versions": {
+    "hbos": null,
+    "xgboost": { "version": "xgb-global-2026.07.3", "registry_state": "champion" },
+    "challenger": { "version": "xgb-global-2026.08.0-rc1", "registry_state": "challenger" }
+  },
+  "policy_version": "policy-2026.08.1",
+  "fallbacks": [
+    {
+      "layer": "hbos_individual",
+      "reason_code": "RC_COLD_START",
+      "detail": "historico insuficiente: peso do HBOS zerado e risco deslocado para o modelo global"
+    }
+  ],
+  "shadow": {
+    "sampled": true,
+    "sample_rate": 0.03,
+    "full_cascade_evaluated": true
+  },
+  "latency_ms_total": 58.2
+}

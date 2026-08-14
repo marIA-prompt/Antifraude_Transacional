@@ -1,0 +1,196 @@
+openapi: 3.0.3
+info:
+  title: Motor de Score Antifraude — API v1
+  version: 1.0.0
+  description: |
+    Contrato AS-IS congelado. A resposta expõe apenas `decision_final`; score, sinais, features e
+    pesos permanecem em logs e eventos internos.
+
+    Este contrato é **imutável em semântica**: nenhum campo novo obrigatório, nenhuma mudança de
+    significado de valor existente. Consumidores que precisam de explicabilidade usam a v2, sob
+    autenticação e autorização por perfil.
+
+    Explicabilidade e orquestração de `challenge` não são obtidas por esta API: a trilha assíncrona
+    consome o evento `fraud.challenge.created`.
+servers:
+  - url: https://antifraude.internal
+    description: Rede interna
+paths:
+  /v1/authorization/score:
+    post:
+      operationId: scoreTransactionV1
+      summary: Avalia uma transação e retorna a decisão final
+      description: |
+        Caminho crítico de autorização. Alvo de latência: p95 inferior a 100 ms para `approve` e
+        `deny`. `challenge` publica `fraud.challenge.created` de forma assíncrona, sem bloquear
+        a resposta.
+      security:
+        - mtls: []
+      parameters:
+        - name: X-Correlation-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+          description: Propagado para trace, evento e auditoria.
+        - name: X-Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScoreRequest'
+      responses:
+        '200':
+          description: Decisão avaliada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScoreResponseV1'
+              examples:
+                aprovada:
+                  value:
+                    decision_final: approve
+                desafiada:
+                  value:
+                    decision_final: challenge
+        '400':
+          description: Payload inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Limite de requisições excedido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: |
+            Indisponibilidade sem decisão segura possível. O consumidor aplica a política de
+            autorização degradada declarada em contrato operacional; o motor não decide por omissão.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    mtls:
+      type: http
+      scheme: bearer
+      description: mTLS entre serviços internos, com token de serviço no header Authorization.
+  schemas:
+    ScoreRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - transaction_id
+        - subject
+        - amount
+        - currency
+        - channel
+        - product
+        - occurred_at
+      properties:
+        transaction_id:
+          type: string
+          maxLength: 128
+        subject:
+          type: object
+          additionalProperties: false
+          required:
+            - cpf
+          properties:
+            cpf:
+              type: string
+              pattern: '^[0-9]{11}$'
+              description: |
+                Recebido apenas no hot path e sob a finalidade de prevenção à fraude. Tokenizado
+                antes de qualquer propagação para evento, trace ou fila.
+            internal_id:
+              type: string
+        amount:
+          type: number
+          minimum: 0
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        channel:
+          type: string
+        product:
+          type: string
+        transaction_type:
+          type: string
+        installments:
+          type: integer
+          minimum: 1
+        occurred_at:
+          type: string
+          format: date-time
+        merchant:
+          type: object
+          additionalProperties: false
+          properties:
+            merchant_id:
+              type: string
+            mcc:
+              type: string
+        device:
+          type: object
+          additionalProperties: false
+          properties:
+            device_id:
+              type: string
+            ip:
+              type: string
+            user_agent:
+              type: string
+        geo:
+          type: object
+          additionalProperties: false
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+            country:
+              type: string
+              pattern: '^[A-Z]{2}$'
+    ScoreResponseV1:
+      type: object
+      additionalProperties: false
+      required:
+        - decision_final
+      properties:
+        decision_final:
+          type: string
+          enum: [approve, challenge, deny]
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: |
+            Código genérico. Mensagens de erro não revelam regra, threshold, score ou versão de
+            modelo: erro detalhado é vetor de engenharia reversa do motor.
+        message:
+          type: string
+        correlation_id:
+          type: string

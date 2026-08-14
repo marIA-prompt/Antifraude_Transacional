@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antifraude.internal/schemas/challenge.outcome.recorded/1.0.0",
+  "title": "challenge.outcome.recorded",
+  "description": "Desfecho da trilha de challenge. E o registro que sustenta CA-1.1: todo fraud.challenge.created precisa ter exatamente um desfecho correspondente.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "idempotency_key",
+    "transaction_id",
+    "correlation_id",
+    "initial_decision",
+    "final_outcome",
+    "decided_by",
+    "reason_codes",
+    "validators",
+    "total_duration_ms",
+    "audit_reference"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "event_type": { "const": "challenge.outcome.recorded" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "idempotency_key": {
+      "description": "Mesma chave do fraud.challenge.created correspondente.",
+      "type": "string",
+      "minLength": 1
+    },
+    "transaction_id": { "type": "string", "minLength": 1 },
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "initial_decision": { "const": "challenge" },
+    "final_outcome": { "enum": ["approve", "deny", "escalate"] },
+    "decided_by": {
+      "enum": ["workflow_consolidation", "early_termination", "human_review", "policy_timeout"]
+    },
+    "reason_codes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^RC_[A-Z0-9_]{2,48}$" }
+    },
+    "validators": {
+      "description": "Resultados dos validadores executados, no formato validator-result.",
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "stepup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted"],
+      "properties": {
+        "attempted": { "type": "boolean" },
+        "channel": { "enum": ["whatsapp", "push", "sms", "voice", "app"] },
+        "result": {
+          "description": "timeout e unreachable nao equivalem a negacao pelo cliente.",
+          "enum": ["confirmed", "denied", "timeout", "unreachable", "not_attempted"]
+        },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "waited_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "human_review": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["queued_at", "resolved_at", "analyst_decision"],
+          "properties": {
+            "queued_at": { "type": "string", "format": "date-time" },
+            "resolved_at": { "type": "string", "format": "date-time" },
+            "analyst_decision": { "enum": ["approve", "deny"] },
+            "analyst_reference": { "type": "string" },
+            "notes_reference": { "type": "string" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sent", "idempotency_key"],
+      "properties": {
+        "sent": { "type": "boolean" },
+        "channel": { "enum": ["whatsapp", "push", "sms", "voice", "app", "none"] },
+        "idempotency_key": { "type": "string", "minLength": 1 },
+        "sent_at": { "type": ["string", "null"], "format": "date-time" },
+        "suppressed_reason": { "type": ["string", "null"] }
+      }
+    },
+    "reversal": {
+      "description": "true quando o desfecho reverte a suspeita inicial. Insumo de medicao de falso positivo por coorte.",
+      "type": "boolean"
+    },
+    "total_duration_ms": { "type": "number", "minimum": 0 },
+    "audit_reference": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "description": "Desfecho por revisao humana exige o registro da revisao.",
+      "if": {
+        "properties": { "decided_by": { "const": "human_review" } },
+        "required": ["decided_by"]
+      },
+      "then": {
+        "required": ["human_review"],
+        "properties": { "human_review": { "type": "object" } }
+      }
+    }
+  ]
+}
