@@ -1,0 +1,12 @@
+{
+  "low_value_max": 200.0,
+  "mid_value_max": 1500.0,
+  "approve_max": 0.35,
+  "challenge_max": 0.75,
+  "thin_file_days": 30,
+  "shadow_rate": 0.03,
+  "hbos_new_subject_weight": 0.0,
+  "hbos_weight": 0.25,
+  "xgboost_weight": 0.75,
+  "policy_version": "policy-v1"
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://senff.local/schemas/model.published.json",
+  "title": "model.published",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_name",
+    "event_version",
+    "model_name",
+    "model_version",
+    "artifact_hash",
+    "feature_schema_version",
+    "registry_state",
+    "published_at"
+  ],
+  "properties": {
+    "event_name": { "const": "model.published" },
+    "event_version": { "type": "string" },
+    "model_name": { "type": "string", "enum": ["hbos", "xgboost", "policy"] },
+    "model_version": { "type": "string" },
+    "artifact_hash": { "type": "string", "minLength": 32 },
+    "feature_schema_version": { "type": "string" },
+    "registry_state": {
+      "type": "string",
+      "enum": ["candidate", "challenger", "champion", "deprecated", "rolled_back"]
+    },
+    "published_at": { "type": "string", "format": "date-time" },
+    "replaces_version": { "type": ["string", "null"] }
+  }
+}

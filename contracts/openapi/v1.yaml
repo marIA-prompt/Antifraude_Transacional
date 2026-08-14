@@ -1,0 +1,104 @@
+openapi: 3.0.3
+info:
+  title: Motor Antifraude — API v1
+  version: "1.0.0"
+  description: >
+    Contrato estável do autorizador. Retrocompatível com a implementação
+    que expõe somente decision_final. Não incluir features, pesos ou CPF.
+servers:
+  - url: /v1
+paths:
+  /score:
+    post:
+      operationId: scoreTransactionV1
+      summary: Decisão síncrona de autorização
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScoreRequest"
+      responses:
+        "200":
+          description: Decisão do hot path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreResponseV1"
+        "400":
+          description: Payload inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlledError"
+components:
+  schemas:
+    ScoreRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - transaction_id
+        - correlation_id
+        - subject_id
+        - amount
+        - timestamp
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+        correlation_id:
+          type: string
+          minLength: 1
+        subject_id:
+          type: string
+          description: Identificador interno ou CPF já tokenizado. Nunca CPF em claro.
+        amount:
+          type: number
+          minimum: 0
+        timestamp:
+          type: string
+          format: date-time
+        channel:
+          type: string
+        product:
+          type: string
+        installments:
+          type: integer
+          minimum: 1
+        merchant_id:
+          type: string
+        mcc:
+          type: string
+        device_id:
+          type: string
+        geo_region:
+          type: string
+        rule_83_candidate:
+          type: boolean
+          description: Sinal de entrada da Regra 83 já avaliada a montante, se houver.
+        history_days:
+          type: integer
+          minimum: 0
+          description: Dias de histórico disponível para o subject_id.
+        is_new_subject:
+          type: boolean
+    ScoreResponseV1:
+      type: object
+      additionalProperties: false
+      required:
+        - decision_final
+      properties:
+        decision_final:
+          type: string
+          enum: [approve, challenge, deny]
+    ControlledError:
+      type: object
+      additionalProperties: false
+      required:
+        - reason_code
+        - message
+      properties:
+        reason_code:
+          type: string
+        message:
+          type: string

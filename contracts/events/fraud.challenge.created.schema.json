@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://senff.local/schemas/fraud.challenge.created.json",
+  "title": "fraud.challenge.created",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_name",
+    "event_version",
+    "transaction_id",
+    "correlation_id",
+    "subject_id",
+    "timestamp",
+    "score_hbos",
+    "score_xgboost",
+    "score_consolidated",
+    "signals",
+    "rules_triggered",
+    "features_relevant",
+    "model_versions",
+    "layers_executed",
+    "terminated_by",
+    "initial_decision",
+    "validator_context"
+  ],
+  "properties": {
+    "event_name": { "const": "fraud.challenge.created" },
+    "event_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "transaction_id": { "type": "string", "minLength": 1 },
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "subject_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identificador interno ou CPF tokenizado. Campo cpf é proibido."
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "score_hbos": { "type": ["number", "null"], "minimum": 0 },
+    "score_xgboost": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "score_consolidated": { "type": "number", "minimum": 0, "maximum": 1 },
+    "signals": { "type": "array", "items": { "type": "string" } },
+    "rules_triggered": { "type": "array", "items": { "type": "string" } },
+    "features_relevant": { "type": "object" },
+    "model_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hbos", "xgboost", "policy"],
+      "properties": {
+        "hbos": { "type": "string" },
+        "xgboost": { "type": "string" },
+        "policy": { "type": "string" }
+      }
+    },
+    "layers_executed": { "type": "array", "items": { "type": "string" } },
+    "terminated_by": { "type": "string" },
+    "initial_decision": { "const": "challenge" },
+    "validator_context": { "type": "object" }
+  }
+}
