@@ -1,0 +1,58 @@
+---
+description: Diretrizes obrigatórias para trabalho no motor de score antifraude (AS-IS, lacunas, TO-BE, critérios de aceite)
+alwaysApply: true
+---
+
+# Motor de score antifraude — diretrizes obrigatórias
+
+Contexto normativo em [`docs/contexto-operacional.md`](../../docs/contexto-operacional.md).
+Desdobramentos em [`docs/arquitetura/`](../../docs/arquitetura/),
+[`docs/evolucoes/`](../../docs/evolucoes/), [`docs/mlops/`](../../docs/mlops/),
+[`docs/contratos/`](../../docs/contratos/) e [`docs/governanca/`](../../docs/governanca/).
+
+## Como estruturar qualquer resposta sobre este projeto
+
+Diferenciar explicitamente:
+
+- **AS-IS**: o que existe e está documentado;
+- **Lacuna/Risco**: limitação, inconsistência ou risco operacional;
+- **TO-BE**: evolução proposta;
+- **Critério de aceite**: como comprovar objetivamente a entrega.
+
+## Regras firmes
+
+1. Não afirmar que AutoML, agentes de IA ou Agent Framework Workflows estão em produção. São
+   evoluções planejadas.
+2. Nunca recomendar AutoML — nem chamada remota a modelo — no hot path de autorização. O serviço
+   consome apenas artefatos aprovados, versionados e servidos com baixa latência.
+3. Tratar HBOS como detector de anomalia por CPF, não como prova de fraude. Score alto é sinal
+   comportamental e não sustenta `deny` isolado.
+4. Tratar XGBoost como modelo supervisionado dependente de rótulos maduros e validação temporal.
+5. Priorizar, nesta ordem: observabilidade da cascata, `challenge` operacional, invalidação de cache
+   e publicação de modelos, cold start. Só depois expandir agentes de IA.
+6. Preservar regras determinísticas, explicabilidade, auditabilidade e fallback declarado por camada.
+7. Incluir LGPD, drift, viés, validação temporal, rotulagem e rollback em qualquer proposta de ML.
+8. Considerar que a API HTTP v1 pode expor somente `decision_final`; explicabilidade vai para a v2,
+   sob autenticação e autorização por perfil, e a orquestração de `challenge` consome evento
+   interno, não a resposta HTTP.
+9. Toda mudança relevante acompanha métricas, critérios de aceite e plano de rollout com gatilho de
+   rollback.
+10. Nenhum modelo é promovido por métrica isolada, e nunca por acurácia. Ver
+    [`docs/mlops/promocao-e-rollout.md`](../../docs/mlops/promocao-e-rollout.md).
+
+## Invariantes técnicas
+
+- Meta de latência do fast path: p95 < 100 ms para `approve`/`deny`.
+- `challenge` tem 100% de desfecho rastreável, idempotente por `transaction_id` e `correlation_id`.
+- Score de camada não executada é `null`, nunca `0`.
+- Toda decisão, regra e fallback carrega reason code do catálogo
+  [`docs/contratos/reason-codes.md`](../../docs/contratos/reason-codes.md).
+- Toda inferência registra `model_version`; toda decisão registra `policy_version`.
+- CPF trafega tokenizado fora do hot path; step-up nunca revela a regra acionada.
+- Timeout e canal indisponível em step-up não equivalem a negação pelo cliente.
+- `sem_desfecho` nunca é tratado como transação legítima.
+
+## Ao alterar contratos
+
+Editar os schemas e o OpenAPI em `docs/contratos/` e rodar `python3 tools/validate_contracts.py`
+antes de concluir. Reason code novo exige entrada no catálogo.
