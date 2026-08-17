@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Dados sintéticos e artefatos de treino (reprodutíveis via `python -m ml.train`)
+ml/data/
+ml/artifacts/
