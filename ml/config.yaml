@@ -1,0 +1,49 @@
+# Configuração versionada do pipeline de treino antifraude.
+# Limites de coorte, janelas temporais e gates de qualidade são configuração
+# versionada (ADR-0003), nunca constantes de código.
+
+schema_version: "1.0.0"
+random_seed: 42
+
+# --- Geração de dados sintéticos (LGPD: dados fictícios, comportamento idêntico) ---
+generation:
+  n_subjects: 6000            # CPFs distintos, sempre tokenizados (subject_token)
+  months: 12                  # janela temporal coberta
+  start_date: "2025-01-01"
+  currency: "BRL"
+  base_fraud_rate: 0.012      # ~1.2% de fraude confirmada na população
+  new_subject_fraction: 0.18  # fração de CPFs que entram sem histórico no período
+
+# --- Validação temporal (proibido split aleatório — MLOps) ---
+temporal_split:
+  train_end: "2025-09-30"     # treino: jan–set
+  validation_month: "2025-10" # validação/calibração: out
+  test_month: "2025-11"       # teste temporal: nov
+  label_maturation_days: 45   # transações mais novas que isto no corte não entram como negativas
+
+# --- Faixas de coorte de cold start (ADR-0003), por contagem de histórico do CPF ---
+cohorts:
+  thresholds_version: "cohort-2025.11.0"
+  historico_minimo_max_tx: 5    # <=5 transações prévias => historico_minimo
+  historico_parcial_max_tx: 30  # <=30 => historico_parcial; >30 => historico_pleno; 0 => sem_historico
+  # Peso do HBOS por faixa (nulo sem histórico suficiente — ADR-0003)
+  hbos_weight:
+    sem_historico: 0.0
+    historico_minimo: 0.0
+    historico_parcial: 0.5
+    historico_pleno: 1.0
+
+# --- Camada de política (ADR-0001): bandas sobre probabilidade calibrada ---
+policy:
+  thresholds_version: "policy-2025.11.0"
+  challenge_band:
+    lower: 0.20   # < lower => approve
+    upper: 0.80   # >= upper => deny; entre os dois => challenge
+
+# --- Gates de qualidade de dados: violação BLOQUEIA o pipeline (MLOps) ---
+data_quality:
+  max_null_rate: 0.02
+  max_duplicate_rate: 0.001
+  min_new_subject_fraction: 0.03
+  max_new_subject_fraction: 0.60
+  max_future_timestamp_rate: 0.0

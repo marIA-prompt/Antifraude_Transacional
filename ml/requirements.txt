@@ -1,0 +1,7 @@
+# Dependências do pipeline de treino de ML (ml/).
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.5
+PyYAML>=6.0.2
+pyarrow>=17  # opcional: espelho colunar em Parquet
+joblib>=1.4
