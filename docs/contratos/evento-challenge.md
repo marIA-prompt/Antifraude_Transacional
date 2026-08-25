@@ -99,12 +99,12 @@ exemplo, versionáveis).
   "fallback_reason": null,
   "ttl_seconds": 900,
   "shadow_mode": false,
-  "feature_schema_version": "unreconciled"
+  "feature_schema_version": "features:candidate-2026.08.25"
 }
 ```
 
-`feature_schema_version` permanece `unreconciled` até D-2 ser fechado. Não copiar 10 ou 13
-para este campo.
+`feature_schema_version` usa `features:candidate-2026.08.25` enquanto D-2 não estiver
+`reconciled`. Não copiar o número 10 ou 13 para este campo.
 
 ## Critérios de aceite
 

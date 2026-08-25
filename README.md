@@ -7,9 +7,9 @@ Todo documento separa **AS-IS**, **Lacuna/Risco**, **TO-BE** e **Critério de ac
 
 > AutoML, agentes de IA e Agent Framework Workflows **não estão em produção**.
 >
-> A quantidade de features **não é definitiva** enquanto
-> [`contracts/features/registry.json`](contracts/features/registry.json) estiver
-> `unreconciled` (divergência 10 × 13).
+> A quantidade de features **não é definitiva**. O registry está em `candidate`
+> ([`contracts/features/registry.json`](contracts/features/registry.json)): 10 e 13
+> nomes propostos, `canonical_list` nula até auditar o FastAPI de produção.
 >
 > NEG83 / Motor H **não** são tratados como gate deste microserviço enquanto D-3 estiver
 > aberto.

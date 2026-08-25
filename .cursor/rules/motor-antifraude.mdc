@@ -30,8 +30,8 @@ Toda recomendação traz número, limiar ou critério mensurável.
 7. Incluir LGPD, viés, validação temporal, rotulagem, drift e rollback em toda proposta de ML.
 8. Considerar que a resposta HTTP atual pode expor apenas `decision_final`.
 9. Não afirmar quantidade de features como definitiva enquanto
-   [`contracts/features/registry.json`](../../contracts/features/registry.json) estiver com
-   `status: unreconciled` (divergência 10 × 13).
+   [`contracts/features/registry.json`](../../contracts/features/registry.json) não estiver
+   com `status: reconciled` (divergência 10 × 13; hoje `candidate`).
 10. Não tratar NEG83 / Motor H como gate deste microserviço enquanto D-3 estiver aberto em
     [`docs/arquitetura/divergencias-documentais.md`](../../docs/arquitetura/divergencias-documentais.md).
 11. Score de camada não executada é `null`, nunca `0`. `sem_desfecho` nunca é classe negativa.

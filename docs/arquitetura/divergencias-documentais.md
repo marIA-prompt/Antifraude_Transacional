@@ -31,13 +31,14 @@ Referência normativa: [`api-versionada.md`](../contratos/api-versionada.md). En
 
 | Camada | Conteúdo |
 |---|---|
-| **AS-IS** | As duas cifras coexistem em documentação. **Nenhuma é canônica.** |
+| **AS-IS** | As duas cifras coexistem em documentação. **Nenhuma é canônica.** Os nomes não aparecem nas fontes. |
 | **Lacuna/Risco** | Treino, inferência e explicabilidade podem divergir de schema. Um número afirmado agora vira dívida invisível no registry |
-| **TO-BE** | Auditoria do código de feature engineering; lista canônica versionada em [`contracts/features/registry.json`](../../contracts/features/registry.json); alinhamento da documentação |
-| **Critério de aceite** | `canonical_list` preenchida, `status = reconciled`, cada feature com nome, tipo, dono, instante de disponibilidade e classificação de leakage. Critério 11 do briefing. Enquanto `status = unreconciled`, qualquer texto que trate 10 ou 13 como definitivo está errado |
+| **TO-BE** | Listas **candidatas** nomeadas em [`contracts/features/registry.json`](../../contracts/features/registry.json) (`status: candidate`, schema `features:candidate-2026.08.25`): 10 a partir dos perfis do bundle HBOS; 13 = essas 10 + `log_amount`, `is_night`, `tx_count_24h` (hipótese H1). Promoção a `reconciled` só após auditoria do FastAPI de produção |
+| **Critério de aceite (agora)** | `canonical_list` continua `null`. `candidate_pdf_10` tem 10 nomes; `candidate_apresentacao_13` tem 13 e prefixo igual aos 10. Teste em `scripts/validate_contracts.py` |
+| **Critério de aceite (fechamento D-2)** | `status = reconciled`, `audited_production_code = true`, cada feature com nome, tipo, instante de disponibilidade e leakage. Critério 11 do briefing. Qualquer texto que trate 10 ou 13 como definitivo **antes** disso está errado |
 
-Este repositório **não contém o código do microserviço**. A auditoria é ação requerida no
-runtime, não um exercício editorial aqui.
+Este repositório **não contém o código de produção do microserviço**. Scaffold (7 stubs) e
+pipeline sintético (10 `COLD_START_FEATURES`) não fecham D-2.
 
 ## D-3 — Relação entre NEG83 / Motor H e o microserviço de score
 

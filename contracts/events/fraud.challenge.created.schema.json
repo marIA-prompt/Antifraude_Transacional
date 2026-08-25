@@ -156,9 +156,9 @@
       "type": "boolean",
       "description": "True quando a avaliacao e amostra shadow e nao deve entrar na fila operacional."
     },
-    "feature_schema_version": {
-      "type": ["string", "null"],
-      "description": "unreconciled ate D-2 fechar. Nao usar 10 ou 13 como versao."
-    }
+        "feature_schema_version": {
+          "type": ["string", "null"],
+          "description": "features:candidate-2026.08.25 enquanto D-2 nao estiver reconciled. Nao usar 10 ou 13 como versao."
+        }
   }
 }

@@ -2,49 +2,87 @@
 
 Normativo executável: [`contracts/features/registry.json`](../../contracts/features/registry.json)
 
-## AS-IS
+Status atual: **`candidate`**. Há listas nomeadas. **Não há lista canônica.**
+`canonical_list` permanece `null` porque o código de produção do FastAPI não está neste
+repositório.
 
-Duas cifras coexistem. **Nenhuma é a lista canônica.**
+## AS-IS — o que as fontes realmente dizem
 
-| Fonte | Quantidade |
-|---|---|
-| Apresentação AS-IS | 13 features + regras + hard-rule geográfica |
-| PDF do microserviço | 10 features numéricas |
+| Fonte | Cardinalidade | Nomes |
+|---|---|---|
+| PDF do microserviço | 10 numéricas | não lista nomes |
+| Apresentação AS-IS | 13 + regras + hard-rule geográfica | não lista nomes |
+| Bundle HBOS (briefing) | insumos de perfil, não o vetor | média do CPF, cartões, estabelecimentos, centróide geográfico |
+| Pipeline sintético (`ml/schema.py`, outra branch) | 10 `COLD_START_FEATURES` + 9 de histórico + one-hots | TO-BE / offline, não o runtime |
+| Scaffold `FeatureEngine` | 7 stubs | não é produção |
+| Motor H `FIRST_NEG83` | 33 | **outro problema** — fora deste registry |
 
-O bundle HBOS persiste perfis (média do CPF, cartões, estabelecimentos, centróide
-geográfico) usados no cálculo. Isso descreve **insumos de perfil**, não a cardinalidade
-final do vetor numérico.
-
-O Motor H usa **33 features** de `FIRST_NEG83` — schema de outro problema
-([motor-h-neg83.md](../recuperacao/motor-h-neg83.md)), não deste registry.
+Regras (`valor_acima_padrao`, `estabelecimento_novo`) e a hard-rule `viagem_impossivel`
+**não são features**. São sinais / reason codes. Hipótese H2 (o slide ter somado regras
+no “13”) permanece aberta.
 
 ## Lacuna/Risco
 
-Afirmar 10 ou 13 como definitivo gera contrato de modelo falso. Treino, inferência e
-`feature_weights` da API v2 divergem em silêncio. Promoção sem schema versionado é o modo de
-falha que o [ADR-0004](../adr/0004-publicacao-de-modelos-e-cache.md) tenta impedir.
+Sem nomes versionados, treino, inferência e `feature_weights` da v2 divergem em silêncio.
+Nulos > **2%** em feature crítica bloqueiam promoção — isso só é auditável com lista
+nomeada. Afirmar 10 ou 13 como definitivo **continua proibido**.
 
-## TO-BE
+## TO-BE — candidatas nomeadas (H1)
 
-Auditoria do código de feature engineering do microserviço, seguida de:
+Derivadas dos perfis do bundle + payload da autorização. Candidata de 10 (PDF) e candidata
+de 13 (apresentação = 10 + 3).
+
+### Candidata PDF — 10 numéricas (`candidate_pdf_10`)
+
+| # | Nome | Grupo | Insumo do bundle | Leakage | Crítica (nulos > 2%) |
+|---|---|---|---|---|---|
+| 1 | `amount` | payload | — | nenhum | sim |
+| 2 | `amount_to_cpf_mean` | derived | média do CPF | só média **anterior** | sim |
+| 3 | `hour_of_day` | payload | — | nenhum | sim |
+| 4 | `day_of_week` | payload | — | nenhum | não |
+| 5 | `installments` | payload | — | nenhum | sim |
+| 6 | `merchant_is_new` | derived | estabelecimentos | conjunto **anterior** | sim |
+| 7 | `card_is_new` | derived | cartões | conjunto **anterior** | sim |
+| 8 | `distance_to_geo_centroid_km` | derived | centróide geográfico | centróide **anterior** | sim |
+| 9 | `cpf_tx_count` | profile | histórico do CPF | contagem **anterior** | sim |
+| 10 | `secs_since_last_tx` | derived | última transação | timestamp **anterior** | não |
+
+### Candidata apresentação — 13 (`candidate_apresentacao_13` = 10 + 3)
+
+| # | Nome | Por que entra na hipótese H1 |
+|---|---|---|
+| 11 | `log_amount` | escala log do valor; comum em HBOS |
+| 12 | `is_night` | recorte de `hour_of_day`; regras de horário |
+| 13 | `tx_count_24h` | velocity; não está no perfil estático do bundle |
+
+`schema_version` desta candidatura: `features:candidate-2026.08.25`.
+
+XGBoost global, no pipeline sintético, ainda usa extras de histórico
+(`tx_count_7d`, `distinct_devices_prior`, `distinct_regions_prior`, `region_is_home`,
+`device_is_new`, `geo_is_domestic`, `amount_zscore_pop`). Isso é **TO-BE de treino**, não
+fecha D-2.
+
+## Como promover a canônica
 
 ```text
-nome estável
-tipo
-unidade
-instante de disponibilidade (anti-leakage)
-dono
-criticidade (nulos > 2% bloqueiam promoção)
-versao do schema
+Auditar o vetor que o FastAPI realmente monta no cálculo de features
+→ se bater com candidate_pdf_10     → canonical_list = essa lista; status = reconciled; count = 10
+→ se bater com candidate_apresentacao_13 → idem com 13
+→ se for outro conjunto            → nova schema_version; NÃO reciclar o número 10 ou 13
+→ feature_schema_version em toda publicação de modelo (ADR-0004)
 ```
 
-Publicar em `contracts/features/registry.json` com `status: reconciled` e
-`schema_version` semântica. Toda promoção de modelo declara `feature_schema_version`
-compatível.
+Enquanto `audited_production_code = false`, promoção de modelo compara hash/versão opaca,
+não a cardinalidade.
 
-## Critério de aceite
+## Critérios de aceite
 
-- Enquanto `status = unreconciled`, este repositório **não** publica `canonical_list`.
-- Critério 11 do briefing: lista canônica conciliada (10 × 13) e versionada.
-- Teste automatizado em `scripts/validate_contracts.py` falha se `canonical_list` for
-  preenchida sem `status: reconciled`, ou se `status` não for um dos valores do enum.
+- `canonical_list` é `null` enquanto `status != reconciled`.
+- `candidate_pdf_10` tem **exatamente 10** nomes únicos, todos presentes em `catalog`.
+- `candidate_apresentacao_13` tem **exatamente 13** nomes, prefixo igual aos 10, mais
+  `log_amount`, `is_night`, `tx_count_24h`.
+- Motor H (33) e reason codes **não** aparecem nas candidatas.
+- Nulos > 2% em `critical: true` bloqueiam promoção (gate do briefing).
+- Teste em `scripts/validate_contracts.py` cobre os itens acima.
+- Critério 11 do briefing só se encerra com `status: reconciled` após auditoria do código
+  de produção.

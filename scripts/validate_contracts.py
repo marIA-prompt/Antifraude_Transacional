@@ -90,25 +90,81 @@ def validate_v1_path(spec: dict) -> None:
         print("ok  path TO-BE /api/v2/score-transaction presente")
 
 
+def _unique_snake(names: list[object], label: str) -> list[str]:
+    if not isinstance(names, list) or not names:
+        fail(f"{label} deve ser lista nao vazia")
+        return []
+    as_str = [n for n in names if isinstance(n, str)]
+    if len(as_str) != len(names):
+        fail(f"{label} deve conter apenas strings")
+        return []
+    if len(set(as_str)) != len(as_str):
+        fail(f"{label} tem nomes duplicados")
+    snake = re.compile(r"^[a-z][a-z0-9_]*$")
+    bad = [n for n in as_str if not snake.match(n)]
+    if bad:
+        fail(f"{label} com nomes fora de snake_case: {bad}")
+    if any(n.lower() in FORBIDDEN_FIELD_NAMES for n in as_str):
+        fail(f"{label} contem campo de CPF em claro")
+    return as_str
+
+
 def validate_feature_registry() -> None:
     registry = json.loads(FEATURE_REGISTRY.read_text(encoding="utf-8"))
     status = registry.get("status")
-    if status not in {"unreconciled", "reconciled"}:
+    if status not in {"unreconciled", "candidate", "reconciled"}:
         fail(f"registry de features com status invalido: {status!r}")
         return
 
-    if status == "unreconciled":
+    counts = {src.get("id"): src.get("count_claimed") for src in registry.get("sources") or []}
+    if counts.get("apresentacao_as_is") != 13 or counts.get("pdf_microservico") != 10:
+        fail("registry deve registrar as duas cifras abertas (13 e 10) como fontes, nao como canonico")
+    else:
+        print("ok  divergencia 10 x 13 registrada como fonte, nao como lista canonica")
+
+    if status in {"unreconciled", "candidate"}:
         if registry.get("canonical_list") is not None:
-            fail("registry unreconciled nao pode publicar canonical_list")
+            fail(f"registry {status} nao pode publicar canonical_list")
         elif registry.get("canonical_count") is not None:
-            fail("registry unreconciled nao pode publicar canonical_count")
+            fail(f"registry {status} nao pode publicar canonical_count")
         else:
-            print("ok  registry de features unreconciled sem lista canonica")
-        counts = {src.get("id"): src.get("count_claimed") for src in registry.get("sources") or []}
-        if counts.get("apresentacao_as_is") != 13 or counts.get("pdf_microservico") != 10:
-            fail("registry deve registrar as duas cifras abertas (13 e 10) como fontes, nao como canonico")
+            print(f"ok  registry de features {status} sem lista canonica")
+
+    if status == "unreconciled":
+        return
+
+    if status == "candidate":
+        ten = _unique_snake(registry.get("candidate_pdf_10") or [], "candidate_pdf_10")
+        thirteen = _unique_snake(
+            registry.get("candidate_apresentacao_13") or [], "candidate_apresentacao_13"
+        )
+        if len(ten) != 10:
+            fail(f"candidate_pdf_10 deve ter 10 nomes, encontrado {len(ten)}")
+        if len(thirteen) != 13:
+            fail(f"candidate_apresentacao_13 deve ter 13 nomes, encontrado {len(thirteen)}")
+        if ten and thirteen and thirteen[:10] != ten:
+            fail("candidate_apresentacao_13 deve comecar pelos 10 da candidata PDF (hipotese H1)")
+        extras = {"log_amount", "is_night", "tx_count_24h"}
+        if thirteen and set(thirteen[10:]) != extras:
+            fail(f"os 3 extras da apresentacao devem ser {sorted(extras)}")
+
+        catalog = registry.get("catalog") or []
+        catalog_names = [item.get("name") for item in catalog if isinstance(item, dict)]
+        missing = [n for n in thirteen if n not in catalog_names]
+        if missing:
+            fail(f"catalogo sem definicao para: {missing}")
         else:
-            print("ok  divergencia 10 x 13 registrada como fonte, nao como lista canonica")
+            print("ok  catalogo cobre as 13 candidatas")
+
+        not_features = {item.get("code") for item in registry.get("not_features") or []}
+        overlap = not_features.intersection(set(thirteen))
+        if overlap:
+            fail(f"reason codes misturados no vetor de features: {sorted(overlap)}")
+
+        if registry.get("audited_production_code") is True:
+            fail("status candidate nao pode marcar audited_production_code=true")
+        else:
+            print("ok  candidatas 10 e 13 nomeadas; producao ainda nao auditada")
         return
 
     canonical = registry.get("canonical_list")
@@ -116,6 +172,8 @@ def validate_feature_registry() -> None:
         fail("registry reconciled exige canonical_list nao vazia")
     elif registry.get("canonical_count") != len(canonical):
         fail("canonical_count deve coincidir com o tamanho de canonical_list")
+    elif registry.get("audited_production_code") is not True:
+        fail("registry reconciled exige audited_production_code=true")
     else:
         print(f"ok  registry reconciled com {len(canonical)} features")
 

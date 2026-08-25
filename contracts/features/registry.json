@@ -1,28 +1,275 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antifraude.internal/contracts/features/registry.json",
-  "title": "Feature schema registry do motor de score",
-  "description": "Lista canônica de features do microserviço FastAPI. Enquanto status for unreconciled, canonical_list permanece nula: as fontes divergem entre 10 features numéricas (PDF do microserviço) e 13 features + regras + hard-rule geográfica (apresentação AS-IS). Não afirmar nenhum dos dois números como definitivo.",
-  "status": "unreconciled",
-  "schema_version": null,
+  "title": "Feature schema registry do motor de score FastAPI",
+  "description": "Candidatas nomeadas a partir do bundle HBOS do briefing e das duas cifras documentais (10 e 13). canonical_list permanece nula: o codigo de producao do microservico nao esta neste repositorio. Nao afirmar 10 ou 13 como definitivo.",
+  "status": "candidate",
+  "schema_version": "features:candidate-2026.08.25",
   "canonical_count": null,
   "canonical_list": null,
+  "audited_production_code": false,
   "sources": [
-    {
-      "id": "apresentacao_as_is",
-      "count_claimed": 13,
-      "notes": "13 features + regras + hard-rule geografica. Especificacao anterior. Nao canonico."
-    },
     {
       "id": "pdf_microservico",
       "count_claimed": 10,
+      "nature": "AS-IS documental",
       "notes": "10 features numericas. Implementacao descrita no PDF. Nao canonico."
+    },
+    {
+      "id": "apresentacao_as_is",
+      "count_claimed": 13,
+      "nature": "AS-IS documental",
+      "notes": "HBOS por CPF — 13 features + regras + hard-rule geografica. Especificacao anterior. Nao canonico."
+    },
+    {
+      "id": "bundle_hbos_briefing",
+      "count_claimed": null,
+      "nature": "AS-IS documental (insumos de perfil, nao cardinalidade)",
+      "notes": "Bundle: modelo + scaler + perfis (media do CPF, cartoes, estabelecimentos, centroide geografico)."
+    },
+    {
+      "id": "ml_pipeline_sintetico",
+      "count_claimed": 10,
+      "nature": "TO-BE / offline (branch cursor/ml-treinamento-modelo-1964)",
+      "notes": "COLD_START_FEATURES tem 10 nomes. Nao e o runtime FastAPI de producao. HBOS sintetico usa so 3 (log_amount, hour, installments)."
+    },
+    {
+      "id": "scaffold_stub",
+      "count_claimed": 7,
+      "nature": "stub",
+      "notes": "engine.py do scaffold calcula 7 floats. Nao e producao."
     },
     {
       "id": "motor_h_first_neg83",
       "count_claimed": 33,
-      "notes": "Schema de outro problema (ranking LATER_SUCCESS). Nao entra neste registry."
+      "nature": "outro problema",
+      "notes": "Ranking LATER_SUCCESS. Fora deste registry."
     }
   ],
-  "required_action": "Auditar o codigo de feature engineering do microservico, versionar a lista e promover status para reconciled."
+  "reconciliation_hypotheses": [
+    {
+      "id": "H1_tres_numericas_a_mais",
+      "description": "A apresentacao conta as 10 do PDF mais log_amount, is_night e tx_count_24h.",
+      "preferred": true
+    },
+    {
+      "id": "H2_slide_somou_regras",
+      "description": "A apresentacao somou 10 numericas + 3 sinais (valor_acima_padrao, estabelecimento_novo, viagem_impossivel) e chamou o total de 13 features. Nesse caso o vetor HBOS canonico e o de 10.",
+      "preferred": false
+    }
+  ],
+  "candidate_pdf_10": [
+    "amount",
+    "amount_to_cpf_mean",
+    "hour_of_day",
+    "day_of_week",
+    "installments",
+    "merchant_is_new",
+    "card_is_new",
+    "distance_to_geo_centroid_km",
+    "cpf_tx_count",
+    "secs_since_last_tx"
+  ],
+  "candidate_apresentacao_13": [
+    "amount",
+    "amount_to_cpf_mean",
+    "hour_of_day",
+    "day_of_week",
+    "installments",
+    "merchant_is_new",
+    "card_is_new",
+    "distance_to_geo_centroid_km",
+    "cpf_tx_count",
+    "secs_since_last_tx",
+    "log_amount",
+    "is_night",
+    "tx_count_24h"
+  ],
+  "xgboost_history_extra": [
+    "tx_count_7d",
+    "distinct_devices_prior",
+    "distinct_regions_prior",
+    "region_is_home",
+    "device_is_new",
+    "geo_is_domestic",
+    "amount_zscore_pop"
+  ],
+  "not_features": [
+    {
+      "code": "valor_acima_padrao",
+      "kind": "business_rule_signal"
+    },
+    {
+      "code": "estabelecimento_novo",
+      "kind": "business_rule_signal"
+    },
+    {
+      "code": "viagem_impossivel",
+      "kind": "hard_rule"
+    },
+    {
+      "code": "cold_start",
+      "kind": "policy_reason_code"
+    }
+  ],
+  "catalog": [
+    {
+      "name": "amount",
+      "type": "float",
+      "unit": "BRL",
+      "group": "payload",
+      "used_by": ["hbos", "xgb", "rules"],
+      "availability": "authorization_time",
+      "leakage_risk": "none",
+      "critical": true,
+      "profile_input": null,
+      "null_gate": 0.02
+    },
+    {
+      "name": "amount_to_cpf_mean",
+      "type": "float",
+      "unit": "ratio",
+      "group": "derived",
+      "used_by": ["hbos", "xgb"],
+      "availability": "bundle_profile_mean",
+      "leakage_risk": "requires_prior_only_mean",
+      "critical": true,
+      "profile_input": "cpf_amount_mean",
+      "null_gate": 0.02
+    },
+    {
+      "name": "hour_of_day",
+      "type": "float",
+      "unit": "hour_0_23",
+      "group": "payload",
+      "used_by": ["hbos", "xgb", "rules"],
+      "availability": "authorization_time",
+      "leakage_risk": "none",
+      "critical": true,
+      "profile_input": null,
+      "null_gate": 0.02
+    },
+    {
+      "name": "day_of_week",
+      "type": "float",
+      "unit": "dow_0_6",
+      "group": "payload",
+      "used_by": ["hbos", "xgb"],
+      "availability": "authorization_time",
+      "leakage_risk": "none",
+      "critical": false,
+      "profile_input": null,
+      "null_gate": 0.02
+    },
+    {
+      "name": "installments",
+      "type": "float",
+      "unit": "count",
+      "group": "payload",
+      "used_by": ["hbos", "xgb", "rules"],
+      "availability": "authorization_time",
+      "leakage_risk": "none",
+      "critical": true,
+      "profile_input": null,
+      "null_gate": 0.02
+    },
+    {
+      "name": "merchant_is_new",
+      "type": "float",
+      "unit": "flag_0_1",
+      "group": "derived",
+      "used_by": ["hbos", "xgb", "rules"],
+      "availability": "bundle_profile_merchants",
+      "leakage_risk": "requires_prior_only_merchant_set",
+      "critical": true,
+      "profile_input": "establishments",
+      "null_gate": 0.02
+    },
+    {
+      "name": "card_is_new",
+      "type": "float",
+      "unit": "flag_0_1",
+      "group": "derived",
+      "used_by": ["hbos", "xgb"],
+      "availability": "bundle_profile_cards",
+      "leakage_risk": "requires_prior_only_card_set",
+      "critical": true,
+      "profile_input": "cards",
+      "null_gate": 0.02
+    },
+    {
+      "name": "distance_to_geo_centroid_km",
+      "type": "float",
+      "unit": "km",
+      "group": "derived",
+      "used_by": ["hbos", "xgb", "rules"],
+      "availability": "bundle_profile_centroid",
+      "leakage_risk": "requires_prior_only_centroid",
+      "critical": true,
+      "profile_input": "geo_centroid",
+      "null_gate": 0.02
+    },
+    {
+      "name": "cpf_tx_count",
+      "type": "float",
+      "unit": "count",
+      "group": "profile",
+      "used_by": ["hbos", "xgb", "cold_start"],
+      "availability": "bundle_or_profile_store",
+      "leakage_risk": "requires_prior_only_count",
+      "critical": true,
+      "profile_input": "cpf_tx_count",
+      "null_gate": 0.02
+    },
+    {
+      "name": "secs_since_last_tx",
+      "type": "float",
+      "unit": "seconds",
+      "group": "derived",
+      "used_by": ["hbos", "xgb"],
+      "availability": "bundle_or_profile_store",
+      "leakage_risk": "requires_prior_only_timestamp",
+      "critical": false,
+      "profile_input": "last_tx_at",
+      "null_gate": 0.02
+    },
+    {
+      "name": "log_amount",
+      "type": "float",
+      "unit": "log1p_BRL",
+      "group": "derived",
+      "used_by": ["hbos", "xgb"],
+      "availability": "authorization_time",
+      "leakage_risk": "none",
+      "critical": false,
+      "profile_input": null,
+      "null_gate": 0.02,
+      "in_extra_13": true
+    },
+    {
+      "name": "is_night",
+      "type": "float",
+      "unit": "flag_0_1",
+      "group": "derived",
+      "used_by": ["hbos", "xgb", "rules"],
+      "availability": "authorization_time",
+      "leakage_risk": "none",
+      "critical": false,
+      "profile_input": null,
+      "null_gate": 0.02,
+      "in_extra_13": true
+    },
+    {
+      "name": "tx_count_24h",
+      "type": "float",
+      "unit": "count",
+      "group": "derived",
+      "used_by": ["xgb", "rules"],
+      "availability": "velocity_window_prior_only",
+      "leakage_risk": "requires_prior_only_24h",
+      "critical": true,
+      "profile_input": "velocity",
+      "null_gate": 0.02,
+      "in_extra_13": true
+    }
+  ],
+  "required_action": "Confirmar nomes no codigo de feature engineering do microservico FastAPI. Se o vetor HBOS tiver 10 nomes, promover candidate_pdf_10 a canonical_list e status reconciled. Se tiver 13, promover candidate_apresentacao_13. Qualquer outro conjunto vira schema_version nova, nao um numero solto na documentacao."
 }

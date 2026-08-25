@@ -69,7 +69,10 @@ mindmap
         Evento fraud.challenge.created
         API v1 congelada
         API v2 autorizada
-        Registry de features unreconciled
+        Registry de features candidate
+          10 nomes PDF
+          13 nomes apresentacao
+          canonical_list nula
       Trilha de challenge
         Fila
         Validadores 800 ms / 2 s
