@@ -1,124 +1,108 @@
-# ADR-0002 — Papéis dos modelos: HBOS, GBDT global, calibração e consolidação
+# ADR-0002 — Papéis dos modelos: HBOS, XGBoost, regras e o que fica fora do hot path
 
-- **Status:** proposto
+- **Status:** aceito (revisado em 2026-08-25)
 - **Depende de:** [ADR-0001](0001-topologia-de-decisao.md)
-- **Lacunas endereçadas:** L2 (approve terminal do HBOS), L6 (cold start), L9 (rótulos)
+- **Lacunas endereçadas:** L4 (short-circuit), L7 (rótulos), L8 (NEG83 / Motor H)
 
 ## Contexto
 
-Os modelos existentes são adequados ao problema. O que precisa ser corrigido é o **papel** de
-cada um na decisão e a ausência de uma etapa explícita de calibração. Este ADR fixa o
-inventário de modelos, o que cada um pode e não pode decidir, e o que fica fora do hot path.
+### AS-IS
+
+Os modelos existentes são adequados ao problema. O que precisa ficar explícito é o **papel**
+de cada um, o que cada um **não** é, e o que é vedado no caminho de autorização.
+
+### Lacuna/Risco
+
+- Interpretar HBOS `deny` como prova de fraude.
+- Treinar ou promover XGBoost com `sem_desfecho` como negativa, ou sem split temporal.
+- Colocar AutoML, Motor H ou agentes de IA no hot path.
+- Afirmar quantidade de features (10 ou 13) como definitiva ([D-2](../arquitetura/divergencias-documentais.md)).
 
 ## Decisão: inventário e papéis
 
 ### Regras determinísticas e hard rules — soberanas onde a política exige certeza
 
-Continuam sendo a camada de maior autoridade nos casos em que o negócio exige decisão certa
-(blocklist confirmada, device banido, viagem impossível). O que muda é que regras deixam de
-determinar *quem é elegível a ser analisado*: a Regra 83 passa a ser sinal, conforme ADR-0001.
+Viagem impossível e demais vetos críticos prevalecem sobre scores. Toda regra produz
+evidência e reason code. Nenhum modelo — e nenhum agente de IA — sobrepõe uma hard rule
+crítica.
 
-Toda regra produz evidência e reason code. Nenhum modelo — e nenhum agente de IA — sobrepõe
-uma hard rule crítica.
-
-### HBOS individual por CPF — sinal comportamental, nunca decisor
+### HBOS individual por CPF — detector de anomalia, não prova de fraude
 
 Mantido. É a escolha correta para o papel:
 
-- treino offline barato por cliente, sobre janela de até ~730 dias;
-- inferência na casa de microssegundos a partir de bundle em cache de memória;
-- **explicabilidade nativa**: a contribuição por feature sai do próprio histograma, o que
-  alimenta reason codes sem custo de SHAP em tempo real.
+- treino offline por cliente, janela de até ~730 dias;
+- valor imediato mesmo com rótulo atrasado — **esta é a razão de existir do HBOS**;
+- inferência a partir de bundle em cache (budget: 8 ms hit + 12 ms HBOS/regras);
+- explicabilidade nativa por histograma, sem SHAP em tempo real.
 
-Restrições que passam a valer:
+Restrições:
 
-- o HBOS **não emite decisão terminal**; contribui com escore e contribuições por feature para
-  a camada de política;
-- seu peso cai a zero ou é reduzido quando o histórico é insuficiente
-  ([ADR-0003](0003-politica-de-cold-start.md));
-- escore alto é comportamento atípico, não prova de fraude — a redação dos reason codes deve
-  refletir isso, inclusive nos textos expostos a analista humano.
+- score alto = comportamento atípico;
+- no AS-IS, `HBOS = deny` é terminal (ADR-0001). Isso **não** autoriza redigir reason codes
+  como "fraude confirmada pelo HBOS";
+- peso cai a zero ou é reduzido em cold start ([ADR-0003](0003-politica-de-cold-start.md)).
 
-Sinal auxiliar recomendado: um z-score robusto por mediana/MAD calculado sobre os mesmos
-perfis. É barato, resistente a caudas longas e serve de sanidade contra bundle degradado ou
-scaler desatualizado.
+### XGBoost global — segunda linha supervisionada, fail-safe da cascata
 
-### GBDT global — champion supervisionado
+Mantido. Treinado com **fraude confirmada**. Cobre CPF novo e padrões em escala. Depende
+integralmente da qualidade e maturação dos rótulos.
 
-Mantido como o modelo de risco global, dependente de rótulos maduros e validação temporal
-estrita (ver [MLOps](../mlops/dados-rotulos-e-promocao.md)).
+Não é ponto único de falha: se indisponível, a decisão do HBOS + regras permanece
+(`xgb_unavailable`).
 
-**LightGBM entra como challenger do XGBoost**, não como substituição decidida: a hipótese é
-latência e memória mais previsíveis com features categóricas de alta cardinalidade (merchant,
-MCC, faixa de device). A troca só se justifica se validada pelo mesmo pipeline de promoção.
+Challengers (LightGBM ou candidato de AutoML offline) só entram por champion/challenger,
+shadow ≥ 4 semanas, canário e rollback < 10 min. Nenhum challenger no hot path sem passar
+pelo budget de **15 ms p95** de inferência (`blocked_models` caso exceda).
 
-### Calibração explícita — artefato de primeira classe
+### Consolidação dual
 
-GBDT devolve escore, não probabilidade. Sem calibração, os thresholds de `challenge` e `deny`
-derivam silenciosamente a cada retreino: a taxa de challenge muda sem que ninguém tenha
-alterado política, e a fila de triagem absorve o efeito.
+AS-IS: média ponderada entre HBOS (quando executado) e XGBoost (quando executado), com
+regras. TO-BE: pesos configuráveis por confiança de histórico (ADR-0003), versionados, sem
+redeploy. Meta-modelo de stacking **rejeitado** nesta fase: perde a camada decisora
+auditável. Se um combinador aprendido for necessário depois do diagnóstico do MAPA, a forma
+aceita é regressão logística sobre poucos sinais, com coeficientes publicados em
+`feature_weights`.
 
-Decisão: calibração isotônica ou Platt ajustada em janela temporal recente, **versionada e
-publicada junto ao modelo**, com a versão registrada em toda inferência. Deriva de calibração
-é monitorada com alerta próprio.
+### Calibração
 
-### Consolidação por política determinística, não por meta-modelo
+XGBoost devolve escore, não probabilidade calibrada. Sem calibração versionada, os
+thresholds de `challenge` (`approve_max`) e `deny` (`deny_min`) derivam a cada retreino e a
+fila absorve o efeito. Calibração isotônica ou Platt entra como artefato publicado junto ao
+modelo ([ADR-0004](0004-publicacao-de-modelos-e-cache.md)), depois do protocolo de avaliação
+do [MAPA Etapa 6](../mlops/acompanhamento-modelagem.md) — e só se houver desfechos
+observados em quantidade suficiente. Não apresentar calibração como concluída sem essa base.
 
-Rejeitada a opção de empilhar um modelo de stacking sobre HBOS + GBDT + regras. O ganho
-marginal não paga a perda de auditabilidade (qual camada elevou o risco) nem o custo de
-monitorar um segundo modelo.
+### Motor H — fora deste inventário de autorização
 
-Se um combinador aprendido for necessário, a forma aceita é **regressão logística sobre um
-conjunto pequeno de sinais**: coeficientes legíveis, `feature_weights` diretos para a API v2 e
-explicação defensável diante de contestação de cliente ou de revisão de decisão automatizada
-(art. 20 da LGPD).
-
-### Modelo dedicado de cold start
-
-Um segundo GBDT treinado **sem nenhuma feature derivada do histórico do CPF**, usando apenas
-atributos da transação, device, merchant, geolocalização e agregados de curto prazo. Isso trata
-o cold start melhor do que zerar features em um modelo que aprendeu a confiar nelas: o modelo
-global com features de histórico ausentes tende a produzir escores mal calibrados exatamente na
-coorte mais exposta. Detalhes em [ADR-0003](0003-politica-de-cold-start.md).
-
-### Sinais de grafo — pré-computados, consultados no hot path
-
-Compartilhamento de device entre CPFs, CPFs por merchant, componentes conexos suspeitos.
-Historicamente é o maior ganho de recall em fraude de cartão. Compatível com o orçamento de
-latência **desde que materializado offline ou em near-real-time** e apenas consultado durante a
-autorização. Cálculo de grafo em tempo de autorização não é aceito.
+Motor H é ranking de recuperação de jornadas NEG83 (`later_success_score`), com 33 features
+de `FIRST_NEG83`, target distinto de fraude confirmada. **Não é camada deste microserviço.**
+Ver [motor-h-neg83.md](../recuperacao/motor-h-neg83.md) e D-3.
 
 ## O que fica fora do hot path
 
 | Componente | Onde pode ser usado | Por quê |
 |---|---|---|
-| AutoML (Azure ML) | Offline: candidatos, featurização, SHAP, champion/challenger | Chamada remota em autorização é proibida; o serviço consome apenas artefatos aprovados, versionados e em cache |
-| Modelos de sequência (GRU/transformer sobre últimas N transações) | Challenger em shadow ou validador assíncrono na trilha de challenge | Custo e variabilidade de latência incompatíveis com o fast path |
-| Autoencoder / Isolation Forest global para fraude nova | Shadow e análise offline | Ganho não comprovado no hot path; risco de instabilidade de escore |
-| LLMs e agentes de IA | Trilha de challenge assíncrona, após os controles determinísticos | Não substituem hard rules nem política determinística |
+| Azure AutoML | Offline: candidatos, SHAP, champion/challenger, shadow ≥ 4 semanas | Chamada remota em autorização é vedada; consome o p95 |
+| Agent Framework Workflows e agentes de IA | Somente trilha assíncrona de `challenge` | Nunca substituem hard rules |
+| Motor H / HGB de recuperação | Teste assistido da policy NEG83, fora da autorização | Target `LATER_SUCCESS`, não fraude; 33 features distintas |
+| Bureau, device intelligence, geo enriquecida | Validadores da trilha de challenge (timeout 800 ms interno / 2 s externo) | Dependência externa proibida no fast path |
+| Modelos de sequência / autoencoder global | Shadow ou validador assíncrono | Latência e instabilidade incompatíveis com 15 ms |
 
-## Consequências
+### AutoML — configuração de referência (offline)
 
-- A explicabilidade melhora sem custo de latência: HBOS entrega contribuições por feature de
-  graça, e a consolidação determinística (ou logística) mantém pesos legíveis.
-- Passam a existir dois modelos supervisionados em produção (global e cold start), o que dobra
-  a superfície de monitoramento, versionamento e promoção. É custo aceito em troca de
-  calibração adequada na coorte de maior exposição.
-- A calibração se torna dependência de release: publicar modelo sem calibração compatível deve
-  falhar a validação de schema descrita em [ADR-0004](0004-publicacao-de-modelos-e-cache.md).
+- Classificação: `primary_metric: average_precision_score_weighted`, split temporal estrito.
+- Regressão: `primary_metric: normalized_root_mean_squared_error`, calibração por faixas.
+- `blocked_models`: qualquer candidato com inferência p95 > 15 ms.
 
 ## Critérios de aceite
 
-- Nenhuma decisão final tem `camada_que_encerrou = HBOS` sem reason code de política
-  explicitamente documentada.
-- Toda inferência registra versão do modelo **e** versão da calibração usadas.
-- Curva de calibração (reliability) dentro de tolerância definida em janela móvel, com alerta de
-  deriva ativo.
-- Reason codes derivados das contribuições do HBOS disponíveis para 100% das decisões em que o
-  HBOS foi executado.
-- Modelo de cold start avaliado por coorte de tempo de relacionamento, com FPR e recall
-  comparados aos do modelo global na mesma coorte.
-- Nenhum artefato de modelo é promovido com base em métrica isolada; conjunto completo em
+- Reason codes de HBOS redigidos como anomalia/atipicidade em 100% dos casos; auditoria
+  amostral sem ocorrência de "fraude confirmada pelo HBOS".
+- 100% das inferências com `model_version` (HBOS bundle e/ou XGBoost) registrada.
+- Nenhum artefato promovido com métrica isolada; conjunto em
   [MLOps](../mlops/dados-rotulos-e-promocao.md).
-- Testes de contrato garantindo que o serviço de autorização não realiza chamadas de rede a
-  serviços de AutoML ou LLM durante o fast path.
+- AutoML sem chamada no span de autorização, verificado por teste de contrato.
+- Challenger em shadow ≥ 4 semanas com PR-AUC (ou AP ponderada) e FPR/FNR por coorte antes
+  de canário.
+- Lista canônica de features **não** é critério deste ADR enquanto D-2 estiver aberto —
+  pertence ao [registry](../contratos/features.md).

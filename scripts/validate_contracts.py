@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Valida os contratos versionados do motor antifraude.
 
-Verifica que o JSON Schema do evento e o OpenAPI sao validos, que o exemplo
-documentado do evento satisfaz o schema e que nenhum contrato aceita CPF em claro.
-
 Uso: python3 scripts/validate_contracts.py
 Dependencias: jsonschema, pyyaml, openapi-spec-validator
 """
@@ -19,8 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 EVENT_SCHEMA = ROOT / "contracts/events/fraud.challenge.created.schema.json"
 EVENT_DOC = ROOT / "docs/contratos/evento-challenge.md"
 OPENAPI = ROOT / "contracts/openapi/score-api.yaml"
+FEATURE_REGISTRY = ROOT / "contracts/features/registry.json"
 
-# Campos que nao devem existir em contrato algum: CPF precisa trafegar tokenizado (LGPD).
 FORBIDDEN_FIELD_NAMES = {"cpf", "cpf_titular", "document_number", "taxpayer_id"}
 
 failures: list[str] = []
@@ -54,6 +51,11 @@ def validate_event_example(schema: dict) -> None:
     if not errors:
         print("ok  exemplo documentado do evento satisfaz o schema")
 
+    scores = example.get("scores") or {}
+    for layer in ("hbos", "xgb"):
+        if layer in scores and scores[layer] == 0:
+            fail(f"exemplo usa score {layer}=0; camada nao executada deve ser null")
+
 
 def validate_openapi() -> dict:
     import yaml
@@ -66,7 +68,6 @@ def validate_openapi() -> dict:
 
 
 def validate_v1_response_shape(spec: dict) -> None:
-    """A v1 deve permanecer restrita a decision_final (retrocompatibilidade)."""
     schema = spec["components"]["schemas"]["ScoreResponseV1"]
     properties = set(schema.get("properties", {}))
     if properties != {"decision_final"}:
@@ -75,6 +76,48 @@ def validate_v1_response_shape(spec: dict) -> None:
         fail("ScoreResponseV1 deve declarar additionalProperties: false")
     else:
         print("ok  contrato v1 restrito a decision_final")
+
+
+def validate_v1_path(spec: dict) -> None:
+    paths = spec.get("paths") or {}
+    if "/api/v1/score-transaction" not in paths:
+        fail("OpenAPI deve expor POST /api/v1/score-transaction (endpoint AS-IS do briefing)")
+    else:
+        print("ok  path AS-IS /api/v1/score-transaction presente")
+    if "/api/v2/score-transaction" not in paths:
+        fail("OpenAPI deve expor POST /api/v2/score-transaction")
+    else:
+        print("ok  path TO-BE /api/v2/score-transaction presente")
+
+
+def validate_feature_registry() -> None:
+    registry = json.loads(FEATURE_REGISTRY.read_text(encoding="utf-8"))
+    status = registry.get("status")
+    if status not in {"unreconciled", "reconciled"}:
+        fail(f"registry de features com status invalido: {status!r}")
+        return
+
+    if status == "unreconciled":
+        if registry.get("canonical_list") is not None:
+            fail("registry unreconciled nao pode publicar canonical_list")
+        elif registry.get("canonical_count") is not None:
+            fail("registry unreconciled nao pode publicar canonical_count")
+        else:
+            print("ok  registry de features unreconciled sem lista canonica")
+        counts = {src.get("id"): src.get("count_claimed") for src in registry.get("sources") or []}
+        if counts.get("apresentacao_as_is") != 13 or counts.get("pdf_microservico") != 10:
+            fail("registry deve registrar as duas cifras abertas (13 e 10) como fontes, nao como canonico")
+        else:
+            print("ok  divergencia 10 x 13 registrada como fonte, nao como lista canonica")
+        return
+
+    canonical = registry.get("canonical_list")
+    if not isinstance(canonical, list) or len(canonical) == 0:
+        fail("registry reconciled exige canonical_list nao vazia")
+    elif registry.get("canonical_count") != len(canonical):
+        fail("canonical_count deve coincidir com o tamanho de canonical_list")
+    else:
+        print(f"ok  registry reconciled com {len(canonical)} features")
 
 
 def validate_no_plaintext_cpf(*documents: object) -> None:
@@ -104,12 +147,18 @@ def main() -> int:
         event_schema = validate_event_schema()
         validate_event_example(event_schema)
         spec = validate_openapi()
+        registry = json.loads(FEATURE_REGISTRY.read_text(encoding="utf-8"))
     except ImportError as exc:
-        print(f"erro: dependencia ausente ({exc.name}). Instale jsonschema, pyyaml e openapi-spec-validator.")
+        print(
+            f"erro: dependencia ausente ({exc.name}). "
+            "Instale jsonschema, pyyaml e openapi-spec-validator."
+        )
         return 2
 
     validate_v1_response_shape(spec)
-    validate_no_plaintext_cpf(event_schema, spec)
+    validate_v1_path(spec)
+    validate_feature_registry()
+    validate_no_plaintext_cpf(event_schema, spec, registry)
 
     if failures:
         print("\nfalhas:")

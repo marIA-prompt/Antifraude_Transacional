@@ -2,41 +2,40 @@
 
 Especificação normativa: [`contracts/openapi/score-api.yaml`](../../contracts/openapi/score-api.yaml)
 
-## Divergência AS-IS
+Endpoint AS-IS do briefing: `POST /api/v1/score-transaction`.
 
-A documentação original do microserviço previa cinco saídas estruturadas:
+## AS-IS — divergência D-1
 
-```json
-{ "score": 0.0, "decision": "approve | challenge | deny", "signals": [], "features": {}, "feature_weights": {} }
+| Fonte | Saída |
+|---|---|
+| Especificação do microserviço | `score`, `decision`, `signals`, `features`, `feature_weights` |
+| Implementação | `{ "decision_final": "approve \| challenge \| deny" }` |
+
+Limitação registrada: *"Resposta HTTP só com `decision_final` → integrador não vê
+score/sinais. Detalhe está no log."*
+
+Validação AS-IS do payload: CPF 11 dígitos, CNPJ 14, valores positivos, tipos (Pydantic).
+Os contratos deste repositório **não** aceitam campo `cpf` — o TO-BE de entrada é
+`subject_token` / identificador tokenizado ([LGPD](../governanca/lgpd-e-dados-sensiveis.md)).
+
+## Lacuna/Risco
+
+Consumidores autorizados (analistas, painel de disputas) não têm caminho suportado, o que
+pressiona dois anti-padrões: ler o banco de auditoria ou acoplar orquestração à HTTP do
+autorizador. Devolver tudo na v1 quebra integradores e expõe a lógica antifraude.
+
+## TO-BE
+
+```text
+API v1: mantém decision_final; retrocompatível; não quebra integrações.
+API v2: score, decision, signals, features, feature_weights, reason codes,
+        model_versions — com autenticação, autorização por perfil,
+        mascaramento e proteção contra exposição da lógica antifraude.
 ```
 
-A implementação atual expõe apenas:
+**A v1 não evolui.** Qualquer necessidade nova entra na v2 (`POST /api/v2/score-transaction`).
 
-```json
-{ "decision_final": "approve | challenge | deny" }
-```
-
-Score, sinais, features e pesos permanecem em logs e eventos internos.
-
-### Lacuna/Risco
-
-Consumidores autorizados que precisam de explicabilidade (analistas, painel de disputas,
-orquestração de triagem) não têm caminho suportado, o que cria pressão por dois anti-padrões:
-ler o banco de auditoria diretamente, ou acoplar orquestração à resposta HTTP do autorizador.
-
-O caminho oposto — simplesmente devolver tudo na v1 — é igualmente ruim: quebra os
-autorizadores existentes e expõe a lógica antifraude a consumidores que não deveriam
-inspecioná-la, o que é um risco de engenharia reversa da política de risco por quem tem acesso à
-API.
-
-## Decisão
-
-**A v1 não evolui.** Continua expondo `decision_final` e permanece o contrato dos autorizadores
-existentes. Qualquer necessidade nova entra na v2.
-
-**A v2 expõe explicabilidade sob controle de acesso.** Requer autenticação, escopo dedicado
-(`antifraude.score.explain`) e autorização por perfil. O nível de detalhe é **filtrado pelo
-perfil do consumidor**:
+**A v2 filtra por perfil:**
 
 | Campo | Perfil operacional | Perfil de análise antifraude |
 |---|---|---|
@@ -46,36 +45,26 @@ perfil do consumidor**:
 | `model_versions` | não | sim, quando permitido |
 | `cohort` | sim | sim |
 
-`reason_codes` está sempre presente, porque é o insumo mínimo para atendimento ao cliente e para
-pedido de revisão de decisão automatizada (art. 20 da LGPD). Os códigos precisam ser
-inteligíveis, não identificadores internos opacos.
+`reason_codes` sempre presente: insumo mínimo para atendimento e revisão de decisão
+automatizada (art. 20). Códigos inteligíveis, não opacos.
 
-**A orquestração de challenge não consome nenhuma das duas APIs.** Ela recebe contexto pelo
-evento [`fraud.challenge.created`](evento-challenge.md). Essa separação é o que permite manter a
-v1 intacta e o fast path livre do custo da orquestração.
+**A orquestração de challenge não consome nenhuma das duas APIs.** Contexto pelo evento
+[`fraud.challenge.created`](evento-challenge.md).
 
-## Considerações de segurança e privacidade
+Idempotência: `X-Idempotency-Key` devolve a decisão original, sem recalcular — a v2 não vira
+oráculo para sondar o modelo.
 
-- `subject_token` no lugar de CPF em claro, na requisição e na resposta.
-- Mascaramento de campos sensíveis em `features` e em evidências, aplicado no servidor — nunca
-  delegado ao cliente.
-- Rate limiting específico da v2: consultas repetidas variando um parâmetro por vez permitem
-  mapear thresholds. O padrão de uso deve ser monitorado, e não apenas o volume.
-- Trilha de auditoria de acesso à v2: quem consultou qual transação e qual nível de detalhe
-  recebeu.
-- Ausência de reavaliação em consulta idempotente: `X-Idempotency-Key` retorna a decisão
-  original em vez de recalcular, evitando que a v2 se torne um oráculo para sondar o modelo com
-  variações de payload.
+Rate limiting específico da v2: consultas repetidas variando um parâmetro mapeiam
+thresholds. Auditar padrão de uso, não só volume.
 
 ## Critérios de aceite
 
-- Testes de contrato garantindo que a resposta da v1 permanece byte-compatível com o AS-IS.
-- Nenhum consumidor da v1 precisa de alteração para o rollout da v2.
-- Perfil sem escopo recebe `403`, e perfil com escopo parcial recebe resposta sem os campos
-  restritos — verificado por teste automatizado por perfil.
-- Nenhuma resposta contém CPF em claro nem campo sensível sem mascaramento, verificado por teste
-  automatizado.
-- Latência da v1 não é afetada pela existência da v2, medida em carga.
-- Acesso à v2 registrado em trilha de auditoria consultável.
-- Nenhum componente de orquestração de challenge referencia as APIs de score, verificado por
-  revisão de dependências.
+- Testes de contrato: v1 byte-compatível, somente `decision_final`,
+  `additionalProperties: false`.
+- Nenhum consumidor da v1 alterado no rollout da v2.
+- Perfil sem escopo: `403`. Perfil parcial: campos restritos ausentes.
+- Nenhuma resposta com CPF em claro, verificado por teste.
+- Latência da v1 não afetada pela existência da v2, medida em carga (p95 da v1 permanece
+  no orçamento de [100 ms](../arquitetura/orcamento-de-latencia.md)).
+- Acesso à v2 em trilha de auditoria consultável.
+- Nenhum componente de orquestração referencia as APIs de score (revisão de dependências).

@@ -1,32 +1,23 @@
 # Trilha de challenge: fila, validadores e step-up
 
-Esta é a **evolução prioritária 1**. Contrato de entrada:
-[`fraud.challenge.created`](../contratos/evento-challenge.md).
+**Evolução prioritária 1.** Contrato de entrada:
+[`fraud.challenge.created`](../contratos/evento-challenge.md). Agent Framework Workflows
+**não está em produção** — é o orquestrador proposto desta esteira, nunca do fast path.
 
-## Contexto
+## AS-IS
 
-### AS-IS
+A banda `challenge` é produzida pela decisão online e **não tem desfecho operacional
+garantido**. Existe, em fonte aparte, confirmação de compra via WhatsApp associada a NEG83
+no produto private label ([Motor H](../recuperacao/motor-h-neg83.md), D-3 aberto). Não
+afirmar que esse WhatsApp é o desfecho do `challenge` deste microserviço até D-3 fechar.
 
-A banda `challenge` é produzida pela decisão online, mas não tem desfecho operacional
-garantido. O único fluxo operacional existente é a confirmação de compra via WhatsApp no produto
-private label, acionada pela Regra 83: confirmação do cliente aprova, ausência de confirmação
-nega.
+## Lacuna/Risco
 
-### Lacuna/Risco
-
-Quatro problemas distintos:
-
-1. **Casos sem desfecho.** Uma transação pode ser classificada como questionável sem acionar
-   fila, step-up, análise humana, validação adicional ou notificação.
-2. **Step-up acoplado à regra e ao produto.** O mecanismo de WhatsApp está preso à Regra 83 e ao
-   private label, não à banda de challenge do escore consolidado. Não é reutilizável pelas
-   demais trilhas.
-3. **Não-resposta tratada como negação.** "Cliente não respondeu" e "cliente negou a compra" são
-   sinais muito diferentes — o primeiro é frequentemente atrito (celular sem bateria, notificação
-   não vista), o segundo é fraude confirmada pelo próprio titular. Colapsar os dois em `deny`
-   gera falso positivo e, pior, contamina os rótulos de treino com fraude que não existiu.
-4. **Ausência de idempotência comprovada.** Sem chave de idempotência, reentrega de mensagem
-   pode disparar notificação duplicada ao cliente.
+1. Caso questionável sem fila, step-up, humano ou notificação.
+2. Se o WhatsApp de NEG83 for o único step-up: acoplado a uma regra e a um produto; não
+   reutilizável pela banda de escore.
+3. Não-resposta tratada como negação mistura atrito com fraude e contamina rótulos.
+4. Sem idempotência, reentrega notifica o cliente duas vezes.
 
 ## TO-BE
 
@@ -36,11 +27,11 @@ challenge
 → persistência de contexto e evidências da decisão inicial
 → fila de triagem
 → workflow de validadores (Agent Framework Workflows)
-     ├── validador de regras adicionais       → deny de alta confiança encerra
-     ├── validador de blocklist / bureau      → deny de alta confiança encerra
+     ├── validador de regras adicionais
+     ├── validador de blocklist / bureau
      ├── validador de geolocalização/dispositivo
      ├── validador de histórico estendido
-     └── step-up de autenticação (inclui confirmação via WhatsApp)
+     └── step-up de autenticação
 → consolidação
 → approve / deny / escalate
 → escalate → fila de análise humana
@@ -48,100 +39,69 @@ challenge
 → auditoria
 ```
 
-O Microsoft Agent Framework Workflows é usado **apenas nesta trilha**, nunca no fast path de
-autorização. Não está em produção hoje; é evolução planejada.
+Validadores externos **nunca** no caminho síncrono de autorização (critério 10 do briefing).
 
-## Contrato de cada validador
+### Contrato de cada validador
 
-Requisitos que valem para todos, sem exceção:
+- entrada/saída versionadas;
+- retorna `approve`, `deny` ou `escalate` — nunca veredito ambíguo;
+- evidências e reason codes;
+- **timeout** e **circuit breaker**;
+- **fallback seguro** declarado — padrão: `escalate` em falha/timeout; `deny` automático só
+  com política explícita (ausência como sinal de risco);
+- tracing, duração, resultado, erro, timeout, fallback;
+- testável com dependências mockáveis.
 
-- contrato de entrada e saída **versionado**;
-- retorna `approve`, `deny` ou `escalate` — nunca um veredito ambíguo;
-- retorna evidências e reason codes;
-- possui **timeout** e **circuit breaker**;
-- possui **fallback seguro** definido: qual resultado assume quando a dependência falha;
-- gera tracing, logs e métricas de duração, resultado, erro, timeout e fallback;
-- é testável isoladamente, com dependências externas mockáveis;
-- **não bloqueia indefinidamente** uma decisão.
+`approve` de um validador **não** encerra o workflow. `deny` de alta confiança (blocklist
+confirmada, bureau com fraude registrada) pode encerrar.
 
-Sobre o fallback seguro: "seguro" não significa sempre `deny`. Negar por indisponibilidade de
-bureau transforma uma falha de infraestrutura em perda de receita e em rótulo de fraude falso.
-A regra padrão é **`escalate` em caso de falha ou timeout**, reservando `deny` automático para
-os casos em que a própria ausência de resposta é sinal de risco definido por política explícita.
+### Step-up
 
-### Encerramento antecipado
-
-Um validador pode encerrar o workflow apenas com `deny` de **alta confiança** (blocklist
-confirmada, bureau com fraude registrada). `approve` de validador não encerra o workflow: os
-demais validadores continuam, porque nesta trilha o custo de latência não é restrição e o valor
-de acumular evidência é alto. É a mesma lógica do [ADR-0001](../adr/0001-topologia-de-decisao.md)
-aplicada ao fluxo assíncrono.
-
-### Step-up de autenticação
-
-O disparo de confirmação via WhatsApp é absorvido como **um validador de step-up**, desacoplado
-da Regra 83 e do private label. Semântica dos desfechos:
-
-| Resposta do cliente | Resultado do validador |
+| Resposta do cliente | Resultado |
 |---|---|
-| Confirma a compra | `approve` (com registro para monitoramento posterior) |
-| Nega a compra | `deny` de alta confiança, mais sinal forte de fraude para rotulagem |
-| Não responde até o timeout | `escalate` para análise humana — **nunca `deny` automático** |
+| Confirma a compra | `approve` (com monitoramento posterior) |
+| Nega a compra | `deny` de alta confiança + sinal forte para rotulagem |
+| Não responde até o timeout | `escalate` — **nunca `deny` automático** |
 
-A distinção entre negação explícita e silêncio precisa sobreviver até a base de rótulos, porque
-alimenta o treino dos modelos supervisionados.
+Negação explícita e silêncio chegam distintos à base de rótulos.
 
-## Checkpoints e retomada de estado
+Se o canal for WhatsApp hoje usado em NEG83, absorvê-lo como validador **desacoplado** da
+regra e do private label — depois de D-3.
 
-Integrações externas lentas e o step-up (que depende do tempo de resposta humana) exigem que o
-workflow suporte **checkpoint e retomada**. O caso não fica com thread ou conexão presa
-aguardando; o estado é persistido e retomado quando a resposta chega ou quando o timeout expira.
+### Idempotência
 
-## Idempotência
+Chave: `transaction_id` + `schema_version` (`idempotency_key` do evento). Reentrega não
+duplica caso, validador nem notificação.
 
-Chave: `transaction_id` + `correlation_id`, transportada em `idempotency_key` no evento.
-Garantias exigidas:
+### Agentes de IA
 
-- reentrega do evento não cria segundo caso na fila;
-- validador não é reexecutado para o mesmo caso e mesma versão de contrato;
-- notificação ao cliente não é enviada em duplicidade, mesmo com reentrega ou retomada de
-  checkpoint;
-- consolidação é determinística: mesmas saídas de validadores produzem o mesmo desfecho.
+Entram por último, depois dos controles determinísticos. Não substituem hard rules. Não
+decidem sozinhos. Mesmos requisitos de timeout, circuit breaker, fallback e contrato.
 
-## Agentes de IA nesta trilha
+## SLOs do caminho de análise
 
-Entram **por último**, como apoio à triagem, e somente depois de os controles determinísticos
-estarem operando. Restrições:
+| Métrica | Alvo |
+|---|---|
+| Workflow de challenge (p95) | < 3 s síncrono / < 60 s assíncrono |
+| Timeout por validador interno | 800 ms |
+| Timeout por validador externo (bureau) | 2 s |
+| Taxa de fallback por validador | < 1% |
+| Tempo até desfecho de step-up (mediana) | < 5 min |
+| Backlog da fila de triagem humana | < 30 min |
+| `escalate` sem tratamento em 24 h | 0% |
+| Challenges com desfecho rastreável | 100% |
 
-- não substituem hard rules nem políticas determinísticas em decisões críticas;
-- não decidem sozinhos: produzem sumarização, priorização e hipóteses para o analista humano;
-- sujeitos aos mesmos requisitos dos demais validadores (timeout, circuit breaker, fallback,
-  tracing, contrato versionado);
-- saída registrada como evidência atribuída ao agente, distinguível de evidência determinística
-  na auditoria.
-
-## Métricas
-
-- taxa de `challenge` sobre o total de transações;
-- desfecho da trilha: aprovação posterior, negação posterior, escalonamento humano;
-- **taxa de não-resposta ao step-up, medida separadamente da taxa de negação explícita**;
-- tempo até desfecho (p50, p95) e tempo de permanência na fila humana;
-- por validador: duração, taxa de erro, taxa de timeout, acionamento de circuit breaker, uso de
-  fallback;
-- taxa de reversão pós-step-up e pós-análise humana, por coorte;
-- casos sem desfecho após o prazo definido (deve ser zero).
+`ttl_seconds` do evento: **900** (15 min) para conciliação de caso órfão — distinto do SLO
+de step-up (mediana < 5 min) e do escalate em 24 h.
 
 ## Critérios de aceite
 
-- 100% dos casos `challenge` possuem desfecho rastreável.
-- Toda decisão da trilha registra evidências e reason codes.
-- Cada validador registra duração, resultado, erro, timeout e fallback.
-- O fluxo é idempotente por `transaction_id` e `correlation_id`, comprovado por teste de
-  reentrega e de retomada de checkpoint.
-- Não-resposta ao step-up resulta em `escalate`, não em `deny`, verificado por teste.
-- Negação explícita e não-resposta são persistidas como categorias distintas e chegam distintas à
-  base de rótulos.
-- Nenhuma notificação duplicada ao cliente sob reentrega de evento.
-- Falha de dependência externa não bloqueia o caso além do timeout configurado.
-- Taxa de `challenge`, aprovação posterior, negação posterior e escalonamento humano monitoradas
-  em dashboard.
+- 100% dos `challenge` com desfecho rastreável.
+- SLOs da tabela em dashboard, com alerta quando qualquer linha estourar.
+- Idempotência comprovada por teste de reentrega e de retomada de checkpoint.
+- Não-resposta → `escalate`, verificado por teste.
+- Negação e não-resposta persistidas como categorias distintas até os rótulos.
+- Zero notificação duplicada sob reentrega.
+- Falha externa não bloqueia além do timeout (800 ms / 2 s).
+- Taxa de fallback por validador < 1%.
+- `escalate` sem tratamento em 24 h = 0%.

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antifraude.internal/contracts/features/registry.json",
+  "title": "Feature schema registry do motor de score",
+  "description": "Lista canônica de features do microserviço FastAPI. Enquanto status for unreconciled, canonical_list permanece nula: as fontes divergem entre 10 features numéricas (PDF do microserviço) e 13 features + regras + hard-rule geográfica (apresentação AS-IS). Não afirmar nenhum dos dois números como definitivo.",
+  "status": "unreconciled",
+  "schema_version": null,
+  "canonical_count": null,
+  "canonical_list": null,
+  "sources": [
+    {
+      "id": "apresentacao_as_is",
+      "count_claimed": 13,
+      "notes": "13 features + regras + hard-rule geografica. Especificacao anterior. Nao canonico."
+    },
+    {
+      "id": "pdf_microservico",
+      "count_claimed": 10,
+      "notes": "10 features numericas. Implementacao descrita no PDF. Nao canonico."
+    },
+    {
+      "id": "motor_h_first_neg83",
+      "count_claimed": 33,
+      "notes": "Schema de outro problema (ranking LATER_SUCCESS). Nao entra neste registry."
+    }
+  ],
+  "required_action": "Auditar o codigo de feature engineering do microservico, versionar a lista e promover status para reconciled."
+}

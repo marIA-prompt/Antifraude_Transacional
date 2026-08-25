@@ -1,103 +1,80 @@
 # ADR-0004 — Publicação de modelos e invalidação de cache
 
-- **Status:** proposto
-- **Lacuna endereçada:** L5 (cache exige restart ou limpeza manual após retreino)
+- **Status:** aceito (revisado em 2026-08-25)
+- **Lacuna endereçada:** L2 (cache exige restart ou limpeza manual após retreino)
+- **Depende de:** schema de features versionado — enquanto D-2 estiver aberto, a validação
+  de compatibilidade compara contra a versão *em uso na instância*, não contra uma lista
+  canônica 10/13
 
 ## Contexto
 
 ### AS-IS
 
-Bundles de HBOS (modelo, scaler, perfis estatísticos, metadados) e o modelo global são servidos
-a partir de cache em memória, o que é a razão da latência baixa e não deve mudar.
+Bundles de HBOS (modelo, scaler, perfis) e o XGBoost global são servidos a partir de cache
+em memória. Isso é a razão da latência baixa (budget de 8 ms no hit) e não deve mudar.
+Treino noturno + fila já existem.
 
 ### Lacuna/Risco
 
-Depois de um retreinamento, o serviço pode continuar usando versões antigas em cache, exigindo
-restart ou limpeza manual. Isso produz três problemas de gravidade crescente:
+Depois de um retreinamento, o serviço pode continuar usando versões antigas em cache,
+exigindo restart ou limpeza manual:
 
-1. **Defasagem silenciosa** — instâncias diferentes decidem com versões diferentes, sem que
-   ninguém saiba. A mesma transação teria decisões distintas dependendo do pod que a atendeu.
-2. **Análise post-mortem inválida** — sem a versão registrada por inferência, não é possível
-   atribuir um resultado ruim a um modelo específico.
-3. **Rollback lento** — reverter uma promoção ruim depende de intervenção manual, justamente
-   no momento em que o tempo importa.
+1. **Defasagem silenciosa** — a mesma transação teria decisões distintas por pod.
+2. **Análise post-mortem inválida** — sem `model_version` por inferência.
+3. **Rollback lento** — intervenção manual no momento em que o tempo importa.
 
 ## Decisão
 
-### Pipeline de publicação
+Pipeline do briefing:
 
 ```text
 Pipeline de treino
-→ valida artefato (integridade, assinatura, tamanho, carregabilidade)
-→ valida compatibilidade de schema de features
-→ valida presença da calibração correspondente
+→ valida integridade do artefato e compatibilidade de schema de features
 → registra versão no model registry
-→ publica bundle de modo atômico
-→ promove a versão
+→ publica bundle de forma atômica
+→ promove versão
 → emite evento model.published
-→ invalida cache distribuído
-→ reload lazy ou eager por instância
+→ invalida cache distribuído (chave: cpf + model_version)
+→ reload lazy (próxima requisição) ou eager (warm-up)
 → registra model_version_active por instância
-→ dashboard confirma convergência da frota
+→ dashboard confirma convergência entre réplicas
 ```
 
-**Publicação atômica** significa escrita em caminho novo e imutável seguida de troca de ponteiro
-de versão. Nenhuma instância deve conseguir observar um bundle parcialmente escrito.
+**Publicação atômica:** escrita em caminho novo e imutável + troca de ponteiro. Nenhuma
+instância observa bundle parcialmente escrito.
 
-**Invalidação em duas camadas.** O evento `model.published` invalida a chave no cache distribuído
-e sinaliza as instâncias para recarregar o cache local. Enquanto a nova versão não estiver
-carregada e validada, a instância continua servindo a anterior — degradar para "sem modelo"
-nunca é aceitável no fast path.
+**Invalidação em duas camadas.** `model.published` invalida a chave no cache distribuído e
+sinaliza reload do cache local. Enquanto a nova versão não estiver carregada e validada, a
+instância **continua servindo a anterior**. Degradar para "sem modelo" no fast path não é
+aceitável; o fallback é o da [escada](../arquitetura/orcamento-de-latencia.md).
 
-### Estados no model registry
+**Granularidade do HBOS.** Muitos artefatos pequenos, cadência por CPF. Invalidação global a
+cada retreino individual provocaria tempestade de recarga. Chave: `cpf_token + model_version`
+(CPF nunca em claro na chave de cache de evento/log). Evento de publicação do HBOS carrega
+o conjunto de identificadores afetados.
 
-```text
-candidate    → artefato registrado, ainda não exposto a tráfego
-challenger   → avaliado em shadow contra o champion
-champion     → serve as decisões de produção
-deprecated   → substituído, mantido para auditoria e reprodutibilidade
-rolled_back  → promovido e revertido; motivo do rollback registrado
-```
+**Estados no registry:** `candidate` → `challenger` → `champion` → `deprecated` |
+`rolled_back`. `rolled_back` bloqueia repromoção acidental da mesma versão.
 
-### Especificidade dos bundles por CPF
+**Rollback:** troca de ponteiro, acionável por configuração, sem deploy, **< 10 min**.
 
-O HBOS tem uma característica que o diferencia do modelo global: são muitos artefatos pequenos,
-retreinados em cadência própria por CPF. Invalidação global a cada retreino individual
-provocaria tempestade de recarga. Decisão: **invalidação granular por chave de CPF**, com o
-evento `model.published` do HBOS carregando o conjunto de identificadores afetados, e a versão
-do bundle registrada por inferência da mesma forma que a do modelo global.
+**Reconciliação:** a instância compara `model_version_active` com a versão promovida no
+registry em ciclo periódico, independentemente do evento — evento perdido não é modo de
+falha silencioso.
 
-### Rollback
-
-Rollback é troca de ponteiro de versão, acionável por configuração, sem deploy e sem
-reprocessamento. O estado `rolled_back` bloqueia repromoção acidental da mesma versão sem
-revisão explícita.
-
-## Consequências
-
-- Publicações passam a ser observáveis e reversíveis; a frota tem convergência verificável.
-- Toda inferência carrega a identidade completa dos artefatos usados, o que torna possível
-  atribuir performance e fraude a versões específicas.
-- Custo: infraestrutura de mensageria e cache distribuído entra no caminho de publicação, com
-  necessidade de tratamento de evento perdido — daí a exigência de reconciliação periódica
-  (a instância compara sua versão ativa com a versão promovida no registry, independentemente
-  do evento).
-- A validação de schema de features cria acoplamento explícito entre pipeline de treino e
-  serviço de autorização. Isso é intencional: é o ponto onde uma incompatibilidade deve falhar,
-  em vez de produzir escore silenciosamente errado.
+**Compatibilidade de schema:** promoção falha se o artefato não declarar
+`feature_schema_version` compatível com o servido. Enquanto o registry de features estiver
+`unreconciled`, a comparação é de hash/versão opaca, não de cardinalidade 10 vs 13.
 
 ## Critérios de aceite
 
-- 100% das publicações de modelo aplicadas sem restart manual.
-- Toda inferência registra a versão de modelo e de calibração usadas, inclusive a versão do
-  bundle HBOS do CPF avaliado.
-- Instâncias com defasagem acima do limite configurado são identificadas e alertadas, com
-  dashboard de convergência da frota.
-- Rollback para a versão anterior executável por configuração, com tempo medido e registrado em
-  exercício de teste.
-- Publicação falha, sem promover, quando a integridade do artefato, a compatibilidade de schema
-  de features ou a presença da calibração não são satisfeitas.
-- Reconciliação periódica detecta divergência entre versão ativa na instância e versão promovida
-  no registry, mesmo com perda do evento `model.published`.
-- Nenhuma instância serve decisão sem modelo carregado; falha de carga mantém a versão anterior
-  e emite alerta.
+- **100%** das publicações aplicadas sem restart manual.
+- Convergência de versão entre réplicas **< 5 min** (p95), visível em dashboard.
+- **100%** das inferências com `model_version` registrada (bundle HBOS e/ou XGBoost).
+- Rollback para a versão anterior **< 10 min**, exercitado em teste com tempo medido.
+- Alerta automático de instância defasada acima do limite configurado.
+- Publicação falha, sem promover, quando integridade, schema de features ou carregabilidade
+  não passam.
+- Reconciliação periódica detecta divergência mesmo com perda de `model.published`.
+- Nenhuma instância serve decisão sem modelo carregado: falha de carga mantém a versão
+  anterior e emite alerta.

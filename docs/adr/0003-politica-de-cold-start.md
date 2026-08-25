@@ -1,94 +1,77 @@
 # ADR-0003 — Política de cold start
 
-- **Status:** proposto
+- **Status:** aceito (revisado em 2026-08-25)
 - **Depende de:** [ADR-0001](0001-topologia-de-decisao.md), [ADR-0002](0002-papeis-dos-modelos.md)
-- **Lacuna endereçada:** L6 (cold start indefinido no fluxo vigente)
+- **Lacuna endereçada:** L3 (cold start indefinido)
+- **Nota MAPA:** a Etapa 7 do [acompanhamento](../mlops/acompanhamento-modelagem.md) só
+  fecha a forma funcional dos pesos depois das Etapas 1–6. Este ADR fixa a **política
+  operacional mínima** exigida pelo briefing; não fecha o modelo dedicado de cold start.
 
 ## Contexto
 
 ### AS-IS
 
-Um CPF novo não possui bundle HBOS, porque o modelo individual é treinado sobre histórico do
-próprio cliente. No fluxo vigente, com a Regra 83 como gate e o HBOS como primeira camada de
-modelo, o caminho de uma transação de CPF sem histórico **não está documentado**: não se sabe
-se ela vai direto ao XGBoost, se recebe aprovação padrão ou se depende de comportamento
-implícito do carregador de bundles.
+Um CPF novo não possui bundle HBOS confiável: o modelo individual treina sobre o histórico
+do próprio cliente. O XGBoost global é a linha que cobre CPF novo. O caminho exato (peso do
+HBOS, default de aprovação, reason code) **não está documentado como política configurável**.
 
 ### Lacuna/Risco
 
-A aprovação padrão de CPF novo reduz atrito na entrada do cliente, mas concentra exposição a
-fraude exatamente onde não há sinal comportamental. Ao mesmo tempo, endurecer indiscriminadamente
-o tratamento de CPF novo penaliza clientes legítimos em aquisição — é a coorte com maior risco
-de viés do sistema, e a que mais afeta a experiência de primeiro uso.
+Aprovação padrão de CPF novo concentra exposição onde não há sinal comportamental. Endurecer
+sem faixa de valor penaliza aquisição — é a coorte de maior risco de viés. Alimentar o HBOS
+com histórico insuficiente produz anomalia espúria (score alto por falta de base, não por
+fraude).
 
-Há ainda um risco silencioso de calibração: alimentar o modelo global com features de histórico
-ausentes ou imputadas produz escores mal calibrados, porque o modelo aprendeu a confiar nessas
-features. O resultado é uma decisão aparentemente probabilística sobre um escore que não
-corresponde à probabilidade real de fraude naquela coorte.
+Thresholds `R$ X` e `R$ Y` são parâmetros de negócio, não constantes deste ADR.
 
 ## Decisão
 
-**1. Cold start é uma condição medida, não binária.** A elegibilidade ao HBOS depende de
-critérios explícitos e configuráveis, não da mera existência do bundle:
+**1. Política mínima, configurável, por valor e hard rule** — texto do briefing:
 
 ```text
-sem_historico     : nenhuma transação observada
-historico_minimo  : abaixo do número mínimo de transações ou de dias configurado
-historico_parcial : atende ao mínimo, mas abaixo do volume de confiança plena
-historico_pleno   : elegível a peso integral do HBOS
+CPF novo + valor < R$ X + sem hard rule
+  → approve com monitoramento reforçado
+
+CPF novo + R$ X ≤ valor < R$ Y
+  → challenge com step-up
+
+CPF novo + valor ≥ R$ Y  ou  hard rule crítica
+  → deny ou escalate
 ```
 
-Os limites de cada faixa são configuração versionada, não constantes de código.
+**2. Em qualquer caso de CPF novo:**
 
-**2. Peso do HBOS proporcional à confiança do histórico.** Peso nulo em `sem_historico` e
-`historico_minimo`; peso reduzido em `historico_parcial`; peso integral em `historico_pleno`.
+- peso do HBOS = 0 (ou reduzido por baixa confiança);
+- peso do modelo global aumentado;
+- reason code obrigatório: `cold_start`.
 
-**3. Modelo dedicado de cold start.** Nas faixas sem histórico suficiente, o escore de risco
-vem do GBDT treinado sem features derivadas do histórico do CPF (ADR-0002), com **calibração
-própria** ajustada na mesma coorte.
+**3. `R$ X` e `R$ Y` são configuração versionada**, alterável sem redeploy, com trilha de
+quem alterou o quê. Valores iniciais são definidos pela operação de fraudes e revisados com
+as métricas da coorte — não neste documento.
 
-**4. Decisão modulada por exposição, não por regra única.** A política combina faixa de
-histórico, valor, canal, produto, tipo de transação e hard rules:
+**4. Modelo dedicado de cold start (GBDT sem features de histórico do CPF) fica adiado**
+até o MAPA concluir Etapas 1–6 e a Fase 1 (challenge com desfecho) estar operacional.
+Endurecer a coorte sem fila de triagem cria volume sem desfecho, pior do que o AS-IS.
 
-```text
-CPF novo + baixo valor + sem hard rule
-→ approve com monitoramento reforçado
-
-CPF novo + valor intermediário
-→ challenge com step-up de autenticação
-
-CPF novo + alto valor  ou  hard rule crítica
-→ deny ou escalate
-```
-
-**5. Reason code obrigatório.** Toda decisão influenciada pela política registra
-`cold_start` e a faixa de histórico aplicada, de forma que a coorte seja reconstituível em
-análise posterior sem inferência indireta.
-
-**6. Thresholds configuráveis sem redeploy**, com trilha de auditoria de alteração.
+**5. Coorte mensurada em separado.** CPF novo não se mistura ao dashboard geral de FPR/FNR.
 
 ## Consequências
 
-- Existe um caminho definido e testável para CPF novo, eliminando comportamento implícito do
-  carregador de bundles.
-- A coorte de cold start passa a ser mensurável de ponta a ponta, o que é pré-requisito para as
-  avaliações de viés e equidade descritas em
-  [MLOps](../mlops/dados-rotulos-e-promocao.md).
-- Custo: mais um modelo e mais uma calibração para versionar, monitorar e promover.
-- O aumento de `challenge` na coorte de CPF novo pressiona a fila de triagem. A política só deve
-  endurecer depois que a [trilha de challenge](../workflows/trilha-de-challenge.md) estiver
-  operacional — caso contrário, cria-se volume sem desfecho, que é pior do que o AS-IS.
+- Existe caminho testável para CPF novo, sem comportamento implícito do carregador de
+  bundles.
+- Aumento de `challenge` na faixa `[X, Y)` pressiona a fila — por isso a trilha de challenge
+  (Fase 1) precede o endurecimento.
+- Custo de monitoramento: uma coorte a mais, com reason code como chave de reconstituição.
 
 ## Critérios de aceite
 
-- Métricas separadas para CPF novo e CPF com histórico, quebradas pelas quatro faixas de
-  histórico.
-- Por coorte: taxa de fraude confirmada, taxa de challenge, taxa de deny, taxa de aprovação
-  legítima e taxa de reversão após step-up ou análise humana.
-- Thresholds e limites de faixa alteráveis sem redeploy, versionados e auditáveis.
-- Reason code `cold_start` presente em 100% das decisões em que a política foi aplicada.
-- Peso efetivo do HBOS registrado por transação, comprovando que é nulo nas faixas sem
-  histórico suficiente.
-- Calibração do modelo de cold start avaliada na própria coorte, não na população geral.
-- Revisão periódica documentada do impacto em atrito, receita e perda por fraude, com decisão
-  registrada de manter ou ajustar os thresholds.
+- Reason code `cold_start` em **100%** das decisões em que a política foi aplicada.
+- Peso efetivo do HBOS registrado por transação; = 0 na faixa `sem_historico` (ou o valor
+  reduzido configurado, nunca o peso pleno).
+- Métricas separadas para a coorte de CPF novo: taxa de fraude confirmada, challenge, deny,
+  aprovação legítima, reversão após step-up.
+- `X` e `Y` alteráveis sem redeploy, versionados, auditáveis.
+- Nenhum `deny` de CPF novo baseado **somente** em score HBOS (peso 0). Hard rule crítica
+  continua soberana.
+- Revisão periódica documentada de atrito, receita e perda por fraude na coorte, com decisão
+  de manter ou ajustar `X`/`Y`.

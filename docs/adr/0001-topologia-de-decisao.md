@@ -1,128 +1,110 @@
-# ADR-0001 — Topologia de decisão: avaliação paralela e camada de política
+# ADR-0001 — Cascata com short-circuit, orçamento de latência e escada de degradação
 
-- **Status:** proposto
+- **Status:** aceito (revisado em 2026-08-25)
+- **Substitui:** proposta de 2026-08-14 (avaliação paralela de todas as camadas e rebaixamento
+  da Regra 83 a sinal), baseada em AS-IS que o briefing versão final não adota
 - **Contexto AS-IS:** [`docs/arquitetura/00-contexto-as-is.md`](../arquitetura/00-contexto-as-is.md)
-- **Lacunas endereçadas:** L1 (cobertura de ML condicionada ao gate), L2 (approve terminal do
-  HBOS), L7 (short-circuit oculta camadas posteriores)
+- **Orçamento:** [`docs/arquitetura/orcamento-de-latencia.md`](../arquitetura/orcamento-de-latencia.md)
+- **Lacunas endereçadas:** L4 (short-circuit oculta o XGBoost), L9 (log síncrono)
 
 ## Contexto
 
-O fluxo vigente encadeia as camadas em cascata com short-circuit: a Regra 83 decide quem é
-elegível a ser analisado por modelo, e o approve do HBOS encerra a decisão antes do XGBoost.
-A justificativa histórica é a meta de p95 abaixo de 100 ms.
+### AS-IS
 
-O ponto central deste ADR é que **essa justificativa não se sustenta no orçamento de latência
-real**. O custo dominante do fast path é a busca de features, e ela é compartilhada por todas
-as camadas. A inferência propriamente dita custa poucos milissegundos.
+O microserviço FastAPI decide em cascata:
 
-### Orçamento de latência estimado (fast path)
+```text
+validação → bundle HBOS → features → HBOS + regras → hard-rule de viagem impossível
+→ se HBOS = deny: decisão final deny (XGBoost NÃO executa)
+→ se HBOS = approve ou challenge: XGBoost global → consolidação dual
+```
 
-| Etapa | Custo típico | Observação |
-|---|---|---|
-| Validação de payload e autenticação | 2–5 ms | |
-| Busca única de features online | 10–20 ms | Etapa dominante; I/O de rede |
-| Hard rules, blocklist, velocity | 3–5 ms | Em memória / cache local |
-| HBOS do CPF | 1–3 ms | Bundle já em cache de memória |
-| GBDT global | 1–5 ms | Algumas centenas de árvores |
-| Calibração e política de decisão | < 1 ms | |
-| Publicação do evento e logs | 0 ms no caminho síncrono | Assíncrono, fire-and-forget |
+A meta é p95 < 100 ms. O short-circuit do `deny` do HBOS existe para não gastar os 15 ms
+orçados ao XGBoost nos casos já encerrados.
 
-Total estimado de 25–35 ms, com folga confortável dentro dos 100 ms de meta. Pular o modelo
-global quando o HBOS aprova economiza poucos milissegundos e, em troca, custa o sinal
-supervisionado, a cobertura de ML na maior parte do tráfego e a base de dados não enviesada
-necessária para retreinar.
+### Lacuna/Risco
+
+- Camada não executada não deixa score. Retreino e análise de incidente herdam o viés do
+  short-circuit.
+- Cache miss de bundle sem timeout de 20 ms estoura o hard deadline.
+- Dependência externa no fast path (bureau, AutoML, device) é incompatível com 100 ms.
+- A proposta anterior deste ADR tratava a Regra 83 como gate do score e o approve do HBOS
+  como terminal. Essa leitura está registrada como divergência aberta
+  ([D-3](../arquitetura/divergencias-documentais.md), [D-4](../arquitetura/divergencias-documentais.md)),
+  não como produção deste microserviço.
 
 ## Decisão
 
-**1. Uma única busca de features por transação.** Todas as camadas consomem o mesmo conjunto
-materializado, obtido em uma chamada ao armazenamento online. A busca de features é o
-orçamento que precisa ser protegido, não a inferência.
+**1. A cascata permanece.** Short-circuit de `HBOS = deny` é política de latência vigente, não
+bug a remover nesta fase. Mudança de topologia (avaliação paralela, HBOS nunca terminal) só
+pode ser reaberta depois da instrumentação e do diagnóstico de modelagem
+([MAPA Etapa 1–4](../mlops/acompanhamento-modelagem.md)).
 
-**2. Avaliação paralela das camadas de sinal.** HBOS, GBDT global, regras de negócio e
-features de grafo pré-computadas são avaliados em paralelo sobre as mesmas features. Nenhuma
-delas emite decisão terminal.
+**2. Hard rules críticas prevalecem sobre scores.** Viagem impossível e demais vetos
+determinísticos encerram com reason code próprio, independentemente do HBOS e do XGBoost.
 
-**3. Short-circuit restrito a hard rules críticas.** Encerrar antecipadamente passa a ser uma
-decisão de negócio (blocklist confirmada, device banido, viagem impossível), nunca uma
-otimização de latência. Todo short-circuit registra a regra que o causou e seu reason code.
+**3. Escada de degradação obrigatória** — números do briefing:
 
-**4. A decisão nasce em uma camada de política determinística.** Thresholds por valor, canal,
-produto, tipo de transação e coorte, mais overrides de regra, aplicados sobre a probabilidade
-calibrada e os sinais. A política é configuração versionada, não código.
+| Falha | Comportamento | Reason code | Limiar |
+|---|---|---|---|
+| Cache miss do bundle HBOS | PostgreSQL com timeout **20 ms**; senão XGBoost + regras + hard rules; warm-up assíncrono | `hbos_unavailable` | nunca esperar I/O além do timeout |
+| Falha do XGBoost | mantém HBOS + regras (fail-safe já existente) | `xgb_unavailable` | — |
+| Dependência externa | **proibida no fast path** | — | validadores só na trilha de challenge |
 
-**5. A Regra 83 deixa de ser gate e passa a ser sinal.** Continua produzindo evidência e
-reason code próprios, e continua podendo influenciar a decisão pela camada de política — mas
-não determina mais quem é elegível a receber escore.
+**4. Observabilidade do short-circuit é pré-requisito, não melhoria.** 100% das transações
+registram `layers_executed`, `layers_skipped`, `short_circuit_layer`, scores (null se não
+executou), `fallback_reason` e `model_versions`. Amostra shadow **1% a 5%** avalia
+assincronamente todas as camadas, inclusive o XGBoost nos `deny` do HBOS.
 
-### Fluxo TO-BE
+**5. Log e evento são fire-and-forget (0 ms no orçamento síncrono).**
+
+### Fluxo TO-BE (hot path)
 
 ```text
-Transação
-→ validação de payload + autenticação
-→ busca única de features (perfil do CPF, velocity, device, merchant, geo, grafo)
-→ hard rules críticas → deny imediato (único short-circuit permitido)
-→ em paralelo:
-     ├── HBOS individual por CPF        → score + contribuições por feature
-     ├── GBDT global (ou cold start)    → score
-     ├── regras de negócio (inclui R83) → sinais + reason codes
-     └── features de grafo              → sinais
-→ calibração de probabilidade (artefato versionado)
-→ camada de política: thresholds por valor/canal/produto/coorte + overrides de regra
-→ approve / challenge / deny + reason codes
-→ evento interno assíncrono com score, sinais, features, pesos e versões
+POST /api/v1/score-transaction
+→ validação Pydantic (≤ 5 ms)
+→ carga bundle HBOS: cache hit (≤ 8 ms) | miss → PG ≤ 20 ms | timeout → fallback
+→ features (≤ 25 ms)
+→ HBOS + regras + hard-rule viagem impossível (≤ 12 ms)
+→ se hard rule crítica: deny + reason code (short-circuit de negócio)
+→ se HBOS = deny: deny final; XGBoost skipped; short_circuit_layer = hbos
+→ senão: XGBoost (≤ 15 ms) → consolidação dual (≤ 5 ms)
+→ resposta { decision_final } + enqueue de log/evento (0 ms síncronos)
 ```
+
+## Alternativa considerada e adiada
+
+Avaliação paralela de HBOS, GBDT, regras e grafo, com short-circuit só em hard rule, foi
+proposta em 2026-08-14. **Não é a decisão vigente.** Motivos:
+
+- o briefing versão final preserva a cascata e o orçamento que a justifica;
+- o MAPA exige diagnóstico (rótulos, viés, baseline) antes de fechar linha de modelagem ou de
+  topologia;
+- a relação NEG83 × score (D-3) está aberta — rebaixar "Regra 83 a sinal" pressupõe que ela é
+  gate deste serviço.
+
+A alternativa volta à pauta se a amostra shadow (1%–5%) mostrar, em janela temporal com
+rótulos maduros, que o XGBoost reverteria ≥ um limiar de negócio dos `deny` do HBOS com
+fraude confirmada abaixo de um limiar de FPR definido pela operação. Sem esses números, não
+há decisão de topologia a tomar.
 
 ## Consequências
 
-### Positivas
-
-- Cobertura de ML em 100% do tráfego autorizado, eliminando a fonte estrutural de viés de
-  seleção no retreinamento.
-- Auditabilidade: sempre existe escore e reason code, mesmo em approve.
-- A camada de política concentra a decisão em um ponto único, testável e configurável sem
-  redeploy dos modelos.
-- Habilita a observabilidade completa exigida em
-  [telemetria de decisão](../observabilidade/telemetria-de-decisao.md), porque nenhuma camada
-  deixa de ser executada por padrão.
-
-### Negativas e riscos
-
-- **Custo computacional maior por transação**, já que todas as camadas rodam sempre. Mitigação:
-  o custo incremental é de CPU, não de I/O; deve ser medido em carga antes do rollout.
-- **Mudança de perfil de decisão.** Transações hoje aprovadas pelo gate passarão a receber
-  escore e podem virar `challenge` ou `deny`. Sem controle, isso aumenta atrito e volume de
-  fila de forma abrupta. Mitigação obrigatória: rollout em shadow antes de qualquer efeito
-  sobre a decisão (ver abaixo).
-- **Dependência de calibração.** Com a política centralizada em probabilidade calibrada, uma
-  calibração degradada desloca simultaneamente as taxas de challenge e deny. Ver
-  [ADR-0002](0002-papeis-dos-modelos.md).
-- **Regressão de latência** se a busca de features não for consolidada em uma chamada. Sem o
-  item 1, a paralelização multiplica I/O em vez de compartilhá-lo.
-
-## Plano de rollout
-
-1. **Shadow puro.** As camadas passam a ser avaliadas para todo o tráfego, mas a decisão
-   continua saindo do fluxo atual. Objetivo: medir divergência e estimar o impacto de atrito.
-2. **Medição de impacto.** Relatório de quantas transações hoje aprovadas pelo gate receberiam
-   `challenge` ou `deny`, com fraude confirmada por banda de escore na fatia fora do gate.
-3. **Calibração dos thresholds** da camada de política contra a capacidade operacional da fila
-   de challenge e o apetite de risco definido pelo negócio.
-4. **Rollout canário** por percentual de tráfego, com métricas por coorte e rollback imediato
-   para a topologia anterior por configuração.
-5. **Promoção** da nova topologia a padrão, mantendo o caminho antigo desabilitável por flag
-   por um ciclo completo de maturação de rótulo.
+- Latência continua sendo o vinculo da arquitetura: features (25 ms) são o maior consumidor;
+  inferência do XGBoost (15 ms) só é gasta quando o HBOS não encerrou.
+- Fail-safe da cascata permanece: XGBoost não é ponto único de falha.
+- Custo: telemetria e shadow. Sem eles, o short-circuit continua cego.
+- HBOS `deny` terminal persiste como risco de negócio (anomalia ≠ fraude). Mitigação imediata
+  é medir, não desligar o short-circuit.
 
 ## Critérios de aceite
 
-- Nenhuma transação é decidida sem escore de modelo, exceto por hard rule crítica
-  explicitamente documentada e com reason code registrado.
-- p95 do fast path permanece abaixo de 100 ms com todas as camadas ativas, medido em carga
-  representativa de pico.
-- 100% das transações registram `camadas_executadas`, `camadas_nao_executadas` e
-  `camada_que_encerrou`.
-- A busca de features acontece uma única vez por transação, comprovado por tracing.
-- Thresholds da camada de política são alteráveis sem redeploy, com versionamento e trilha de
-  auditoria de quem alterou o quê.
-- Rollback para a topologia anterior é acionável por configuração, sem deploy.
-- Relatório de fraude confirmada por banda de escore disponível para as três coortes: tráfego
-  fora do gate, approve terminal do HBOS e decidido pelo modelo global.
+- p95 do fast path < 100 ms, com histograma por etapa nos budgets da tabela do briefing.
+- 100% das transações com `short_circuit_layer` ∈ {`hbos`, `hard_rule`, `null`}.
+- 100% dos scores de camada não executada iguais a `null`.
+- Cache miss de bundle: timeout síncrono ≤ 20 ms em 100% dos casos; reason code
+  `hbos_unavailable` quando degradado.
+- Amostra shadow configurável entre 1% e 5%, assíncrona, sem efeito mensurável no p95
+  (< 1 ms de acréscimo).
+- Zero spans de autorização com chamada a bureau, AutoML, LLM ou device intelligence.
+- Relatório mensal de divergência HBOS × XGBoost na amostra shadow, quebrado por decisão.

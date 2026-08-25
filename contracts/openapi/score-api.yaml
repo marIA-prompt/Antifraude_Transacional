@@ -3,12 +3,18 @@ info:
   title: Motor de Score Antifraude
   version: 1.0.0
   description: >-
-    Contrato do microservico de score antifraude. A v1 preserva o comportamento AS-IS e expoe
-    somente decision_final. A v2 adiciona explicabilidade para consumidores autorizados, sob
-    autenticacao, autorizacao por perfil e mascaramento de dados sensiveis.
+    Contrato do microservico FastAPI de score antifraude.
 
-    O orquestrador da trilha de challenge nao deve consumir estas APIs: ele recebe contexto pelo
-    evento interno fraud.challenge.created.
+    AS-IS: POST /api/v1/score-transaction devolve somente decision_final.
+
+    TO-BE: POST /api/v2/score-transaction adiciona explicabilidade para consumidores
+    autorizados, sob autenticacao, autorizacao por perfil e mascaramento.
+
+    O orquestrador de challenge nao consome estas APIs: recebe o evento interno
+    fraud.challenge.created.
+
+    A quantidade de features nao e parte deste contrato enquanto
+    contracts/features/registry.json estiver unreconciled.
 
 servers:
   - url: https://antifraude.internal
@@ -21,13 +27,13 @@ tags:
     description: Contrato com explicabilidade, restrito a perfis autorizados.
 
 paths:
-  /v1/score:
+  /api/v1/score-transaction:
     post:
       tags: [v1]
-      operationId: scoreV1
+      operationId: scoreTransactionV1
       summary: Avalia uma transacao e retorna apenas a decisao final
       description: >-
-        Contrato AS-IS. Mantido estavel para retrocompatibilidade dos autorizadores existentes.
+        Contrato AS-IS do briefing. Mantido estavel para retrocompatibilidade.
         Score, sinais, features e pesos permanecem em logs e no evento interno.
       security:
         - bearerAuth: []
@@ -56,15 +62,14 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
 
-  /v2/score:
+  /api/v2/score-transaction:
     post:
       tags: [v2]
-      operationId: scoreV2
+      operationId: scoreTransactionV2
       summary: Avalia uma transacao e retorna decisao com explicabilidade
       description: >-
-        Requer escopo antifraude.score.explain. O nivel de detalhe retornado depende do perfil do
-        consumidor: perfis sem autorizacao para inspecionar logica antifraude recebem apenas
-        reason codes, sem features, pesos ou versoes de modelo.
+        Requer escopo antifraude.score.explain. O nivel de detalhe depende do perfil.
+        Nao faz parte do fast path dos autorizadores da v1.
       security:
         - bearerAuth: [antifraude.score.explain]
       parameters:
@@ -78,7 +83,7 @@ paths:
               $ref: '#/components/schemas/ScoreRequest'
       responses:
         '200':
-          description: Decisao com explicabilidade, filtrada pelo perfil do consumidor
+          description: Decisao com explicabilidade, filtrada pelo perfil
           content:
             application/json:
               schema:
@@ -106,7 +111,6 @@ components:
       name: X-Correlation-Id
       in: header
       required: true
-      description: Identificador de correlacao propagado para tracing e auditoria.
       schema:
         type: string
         minLength: 1
@@ -122,8 +126,11 @@ components:
   schemas:
     ScoreRequest:
       type: object
-      required: [transaction_id, subject_token, amount, currency, channel, product, occurred_at]
+      required: [transaction_id, subject_token, amount, currency, channel, occurred_at]
       additionalProperties: false
+      description: >-
+        TO-BE de entrada. A implementacao AS-IS valida CPF 11 e CNPJ 14 no payload;
+        este contrato nao aceita campo cpf (LGPD). Usar subject_token.
       properties:
         transaction_id:
           type: string
@@ -131,7 +138,7 @@ components:
         subject_token:
           type: string
           minLength: 1
-          description: Identificador interno do titular ou CPF tokenizado. CPF em claro nao e aceito.
+          description: Identificador interno ou CPF tokenizado. CPF em claro nao e aceito.
         amount:
           type: number
           minimum: 0
@@ -213,73 +220,39 @@ components:
         decision_final:
           allOf:
             - $ref: '#/components/schemas/Decision'
-          description: Mantido como alias de decision para facilitar migracao de consumidores da v1.
+          description: Alias de decision para migracao da v1.
         score:
           type: number
-          minimum: 0
-          maximum: 1
-          description: Probabilidade calibrada consolidada.
+          description: Score consolidado da media ponderada.
         reason_codes:
           type: array
-          description: Sempre presente. Codigos estaveis e inteligiveis, base para revisao de decisao automatizada.
           items:
             type: string
         signals:
           type: array
-          description: Omitido para perfis sem autorizacao de inspecao da logica antifraude.
           items:
-            $ref: '#/components/schemas/Signal'
+            type: string
         features:
           type: object
-          description: Features usadas na decisao, com mascaramento aplicado. Omitido para perfis nao autorizados.
           additionalProperties: true
         feature_weights:
           type: object
-          description: Contribuicao por feature. Omitido para perfis nao autorizados.
           additionalProperties:
             type: number
         model_versions:
           $ref: '#/components/schemas/ModelVersions'
         cohort:
           type: string
-          enum: [sem_historico, historico_minimo, historico_parcial, historico_pleno]
-          description: Faixa de historico aplicada pela politica de cold start.
-
-    Signal:
-      type: object
-      required: [code, source, outcome]
-      additionalProperties: false
-      properties:
-        code:
-          type: string
-        source:
-          type: string
-          enum: [hard_rule, business_rule, hbos, global_model, cold_start_model, graph, device, geo, blocklist, bureau]
-        outcome:
-          type: string
-          enum: [triggered, not_triggered, unavailable]
-        severity:
-          type: string
-          enum: [info, low, medium, high, critical]
+          description: Coorte de cold start, quando aplicavel.
 
     ModelVersions:
       type: object
-      description: Retornado apenas quando o perfil do consumidor permite. Omitido caso contrario.
       additionalProperties: false
       properties:
-        hbos_bundle_version:
+        hbos:
           type: string
           nullable: true
-        global_model_version:
-          type: string
-          nullable: true
-        cold_start_model_version:
-          type: string
-          nullable: true
-        calibration_version:
-          type: string
-          nullable: true
-        policy_version:
+        xgb:
           type: string
           nullable: true
 
@@ -290,7 +263,6 @@ components:
       properties:
         reason_code:
           type: string
-          description: Codigo estavel do erro, auditavel.
         message:
           type: string
         correlation_id:
@@ -298,7 +270,7 @@ components:
 
   responses:
     ValidationError:
-      description: Payload invalido. Rejeicao controlada, com reason code e evidencia auditavel.
+      description: Payload invalido.
       content:
         application/json:
           schema:
@@ -310,19 +282,19 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Perfil sem autorizacao para o nivel de explicabilidade solicitado.
+      description: Perfil sem autorizacao para o nivel de explicabilidade.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     UnprocessableEntity:
-      description: Payload sintaticamente valido, porem semanticamente inconsistente.
+      description: Payload sintaticamente valido, semanticamente inconsistente.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Unavailable:
-      description: Dependencia critica indisponivel. Resposta segue a politica de fallback definida.
+      description: Dependencia critica indisponivel. Segue a escada de degradacao.
       content:
         application/json:
           schema:

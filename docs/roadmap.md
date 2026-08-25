@@ -1,144 +1,95 @@
 # Roadmap de execução
 
-As fases estão ordenadas por **dependência técnica**, não por esforço. Deliberadamente sem
-estimativa de calendário: o que importa aqui é o que precisa existir antes de cada passo.
+Fases por **dependência técnica**, sem estimativa de calendário. Regra: **instrumentar
+antes de mudar decisão, e operacionalizar desfecho antes de gerar mais casos.**
 
-A regra que organiza tudo: **instrumentar antes de mudar decisão, e operacionalizar desfecho antes
-de gerar mais casos.** Endurecer a política antes de existir fila de triagem produz volume sem
-desfecho, que é pior do que o AS-IS.
+Prioridade do briefing: `challenge` → invalidação de cache → cold start → só então agentes
+de IA. AutoML permanece offline.
 
-## Fase 0 — Telemetria e shadow
+O MAPA ([acompanhamento-modelagem.md](mlops/acompanhamento-modelagem.md)) corre em paralelo
+como protocolo de modelagem e **não fecha modelo novo antes da Etapa 1**.
 
-**Por que primeiro:** é o que torna todas as outras fases mensuráveis, e é a fase mais barata em
-relação ao valor. Sem ela, nenhuma mudança posterior pode ser avaliada, e nenhuma promoção de
-modelo é defensável.
+## Fase 0 — Telemetria, shadow e conciliação documental
 
-Escopo: registro por transação de camadas executadas, camada que encerrou, camada que elevou o
-risco, escores, pesos, versões e fallback; amostra de shadow de 1% a 5% cobrindo tráfego **dentro
-e fora** do gate da Regra 83; dashboards de latência, decisão, cobertura de camada e fallback.
+Escopo: campos do decision trace; shadow 1%–5%; dashboards de latência por etapa, fallback
+e divergência HBOS/XGB; auditoria de features (D-2); diagnóstico NEG83 × score (D-3, MAPA
+Etapa 1).
 
-Referência: [telemetria de decisão](observabilidade/telemetria-de-decisao.md).
-
-**Saída que destrava o resto:** a resposta às perguntas abertas 1 e 2 do
-[contexto AS-IS](arquitetura/00-contexto-as-is.md) — volume e taxa de fraude do tráfego fora do
-gate, e o threshold efetivo do approve terminal do HBOS.
+**Saída que destrava o resto:** `short_circuit_layer` em 100% das transações; registry de
+features em andamento; D-3 com evidência ou explicitamente "sistemas paralelos".
 
 ## Fase 1 — Operacionalizar o `challenge`
 
-**Depende de:** Fase 0 (para medir o efeito).
+**Depende de:** Fase 0 (medir o efeito).
 
-Sequência interna, na ordem em que deve ser implementada:
-
-1. publicação do evento `fraud.challenge.created` para transações em banda de challenge;
-2. persistência de contexto e evidências da decisão inicial;
+1. evento `fraud.challenge.created`;
+2. persistência de contexto;
 3. fila de triagem;
-4. regras adicionais e calibração de decisão;
-5. step-up de autenticação, quando aplicável — absorvendo o WhatsApp como validador desacoplado
-   da Regra 83 e do private label;
-6. fila de análise humana para resultado `escalate`;
-7. notificação idempotente e rastreável;
-8. integrações externas: bureau, blocklist, geolocalização, device intelligence;
-9. agentes de IA assíncronos como apoio à triagem — **somente após** os controles determinísticos.
+4. regras adicionais;
+5. step-up (WhatsApp só depois de D-3, como validador desacoplado);
+6. fila humana para `escalate`;
+7. notificação idempotente;
+8. integrações externas (bureau, blocklist, geo, device) **somente aqui**;
+9. agentes de IA — **somente após** controles determinísticos.
 
-Referências: [contrato do evento](contratos/evento-challenge.md),
-[trilha de challenge](workflows/trilha-de-challenge.md).
-
-**Critério de saída:** 100% dos casos `challenge` com desfecho rastreável e idempotência
-comprovada por teste de reentrega.
+**Critério de saída:** 100% dos `challenge` com desfecho; SLOs da
+[trilha](workflows/trilha-de-challenge.md) (p95 workflow, timeouts 800 ms / 2 s, fallback
+< 1%, mediana step-up < 5 min, backlog < 30 min, escalate 24 h = 0%).
 
 ## Fase 2 — Publicação de modelos e invalidação de cache
 
-**Depende de:** Fase 0 (versões registradas por inferência).
+**Depende de:** Fase 0 (`model_version` por inferência).
 
-**Por que antes de qualquer modelo novo:** sem publicação atômica, invalidação de cache e rollback
-por configuração, cada promoção volta a exigir restart manual, e o rollback chega tarde justamente
-quando o tempo importa.
-
-Referência: [ADR-0004](adr/0004-publicacao-de-modelos-e-cache.md).
-
-**Critério de saída:** publicação sem restart manual, dashboard de convergência da frota e
-rollback exercitado com tempo medido.
+[ADR-0004](adr/0004-publicacao-de-modelos-e-cache.md): publicação atômica, evento,
+invalidação `cpf_token + model_version`, convergência < 5 min, rollback < 10 min, 100% sem
+restart.
 
 ## Fase 3 — API v2 com explicabilidade
 
-**Depende de:** Fase 0 (os dados a expor precisam existir de forma estruturada).
+**Depende de:** Fase 0. Pode correr em paralelo a 1 e 2. Não altera decisão.
 
-Pode correr em paralelo às fases 1 e 2, porque não altera decisão. Requer autenticação,
-autorização por perfil, mascaramento e rate limiting específico.
+[API versionada](contratos/api-versionada.md). v1 congelada em `decision_final`.
 
-Referência: [API versionada](contratos/api-versionada.md).
+## Fase 4 — Política de cold start
 
-**Critério de saída:** v1 byte-compatível com o AS-IS e nenhum consumidor da v1 alterado.
+**Depende de:** Fase 1 (challenge com desfecho) e Fase 2 (pesos/configuração publicáveis).
 
-## Fase 4 — Topologia paralela e camada de política
+[ADR-0003](adr/0003-politica-de-cold-start.md): faixas `X`/`Y`, peso HBOS 0, reason code
+`cold_start`, coorte separada. Modelo dedicado de cold start só após MAPA Etapas 1–6.
 
-**Depende de:** Fases 0, 1 e 2. Fase 1 é pré-requisito rígido, porque esta fase **aumenta o
-volume de challenge** ao dar escore a tráfego que antes era aprovado direto.
+## Fase 5 — Calibração, challengers e AutoML offline
 
-Escopo: busca única de features, avaliação paralela das camadas, short-circuit restrito a hard
-rules críticas, camada de política determinística com thresholds configuráveis, Regra 83 rebaixada
-de gate a sinal.
+**Depende de:** Fases 0 e 2, e das Etapas 1–4 do MAPA.
 
-Rollout: shadow puro → medição de impacto de atrito → calibração de thresholds contra a capacidade
-da fila → canário → promoção, com rollback por configuração.
+Shadow ≥ 4 semanas; `average_precision_score_weighted`; `blocked_models` se p95 > 15 ms;
+promoção champion/challenger; rollback < 10 min. Motor H, se aprovado, segue teste
+assistido **fora** desta cascata ([motor-h-neg83.md](recuperacao/motor-h-neg83.md)).
 
-Referências: [ADR-0001](adr/0001-topologia-de-decisao.md),
-[ADR-0002](adr/0002-papeis-dos-modelos.md).
-
-**Critério de saída:** nenhuma transação decidida sem escore (exceto hard rule documentada) e p95
-abaixo de 100 ms com todas as camadas ativas.
-
-## Fase 5 — Política de cold start
-
-**Depende de:** Fase 4 (o modelo dedicado precisa da topologia com pesos configuráveis) e Fase 1
-(o challenge de CPF novo precisa ter desfecho).
-
-Escopo: faixas de histórico, peso do HBOS proporcional à confiança, modelo dedicado de cold start
-com calibração própria, decisão modulada por valor/canal/produto/hard rule, reason code
-`cold_start`.
-
-Referência: [ADR-0003](adr/0003-politica-de-cold-start.md).
-
-**Critério de saída:** métricas por faixa de histórico e thresholds ajustáveis sem redeploy.
-
-## Fase 6 — Calibração explícita e novos modelos
-
-**Depende de:** Fase 2 (registry e publicação) e Fase 0 (base de avaliação não enviesada).
-
-**Por que último:** antes disso não existe base de avaliação confiável para promover nada. Um
-ganho estatístico medido sobre dados filtrados pela política atual não se sustenta em produção.
-
-Escopo: calibração isotônica/Platt como artefato versionado; LightGBM como challenger do XGBoost;
-features de grafo pré-computadas; modelos de sequência e detecção de anomalia global apenas em
-shadow ou como validadores assíncronos; AutoML offline apoiando a esteira champion/challenger.
-
-Referências: [ADR-0002](adr/0002-papeis-dos-modelos.md),
-[MLOps](mlops/dados-rotulos-e-promocao.md).
-
-**Critério de saída:** promoção de modelo com o conjunto completo de métricas, incluindo coortes,
-calibração e latência.
+Mudança de topologia (avaliação paralela, HBOS nunca terminal) **não é fase**. Reabre só
+com números da amostra shadow, conforme [ADR-0001](adr/0001-topologia-de-decisao.md).
 
 ## Resumo de dependências
 
-Versão em diagrama no [mapa mental](mapa-mental.md#5-dependência-entre-as-fases).
-
 ```text
-Fase 0 (telemetria + shadow)
+Fase 0 (telemetria + shadow + D-2/D-3)
   ├── Fase 1 (challenge operacional)
-  │     └── Fase 4 (topologia paralela + política)
-  │           └── Fase 5 (cold start)
+  │     └── Fase 4 (cold start)
   ├── Fase 2 (publicação de modelos)
   │     ├── Fase 4
-  │     └── Fase 6 (calibração + novos modelos)
-  └── Fase 3 (API v2)  [independente das demais]
+  │     └── Fase 5 (calibração + challengers offline)
+  └── Fase 3 (API v2)  [não altera decisão]
 ```
+
+Diagrama: [mapa mental](mapa-mental.md).
 
 ## Riscos transversais
 
-| Risco | Mitigação |
-|---|---|
-| Fase 4 aumenta atrito e volume de fila abruptamente | Shadow puro e calibração de thresholds contra capacidade operacional antes de qualquer efeito na decisão |
-| Rótulos imaturos inflam métricas de fases 5 e 6 | Janela de maturação aplicada ao corte de treino; `sem_desfecho` nunca como negativa |
-| Custo de CPU por transação cresce na Fase 4 | Medição em carga de pico antes do rollout; o custo é de CPU, não de I/O |
-| Agentes de IA antecipados antes dos controles determinísticos | Ordenados explicitamente como item 9 da Fase 1 |
-| Perda de evento de publicação de modelo deixa instância defasada | Reconciliação periódica contra o registry, independente do evento |
+| Risco | Mitigação | Limiar |
+|---|---|---|
+| Fase 4 aumenta challenge sem fila | Fase 1 obrigatória antes | 100% desfecho |
+| Rótulos imaturos inflam Fase 5 | janela de maturação; `sem_desfecho` fora da negativa | teste de pipeline |
+| Cache miss estoura p95 | timeout 20 ms; `hbos_unavailable` | p95 < 100 ms |
+| AutoML ou bureau no hot path | teste de tracing; blocked_models 15 ms | 0 chamadas no span |
+| Agentes antes dos controles | item 9 da Fase 1 | — |
+| Evento de publicação perdido | reconciliação contra registry | convergência < 5 min |
+| Afirmar 10 ou 13 features | registry `unreconciled` | critério 11 |
