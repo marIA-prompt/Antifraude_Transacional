@@ -61,7 +61,7 @@ python3 scripts/validate_contracts.py
 ```
 
 Verifica JSON Schema, OpenAPI, exemplo do evento, v1 restrita a `decision_final`, ausência
-de CPF em claro, registry de features `unreconciled` sem lista canônica, e path
+de CPF em claro, registry `candidate` (10 e 13 nomes, `canonical_list` nula) e path
 `/api/v1/score-transaction`.
 
 ## Ordem de prioridade

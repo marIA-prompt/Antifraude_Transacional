@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Instalar dependências de teste",
+      "type": "shell",
+      "command": "python3 -m pip install -r requirements-dev.txt",
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Validar contratos",
+      "type": "shell",
+      "command": "python3 scripts/validate_contracts.py",
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    }
+  ]
+}
